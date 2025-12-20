@@ -125,7 +125,7 @@ func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader
 		choice, _ := reader.ReadString('\n')
 		if strings.ToLower(strings.TrimSpace(choice)) == "y" {
 			for _, up := range updates {
-				res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
+				res, err := services.UpdatePttStockPriceRest(client, &cfg, up.ProductID, up.Stock, up.Price)
 				if err != nil {
 					fmt.Printf("    [%s] -> Bağlantı Hatası: %v\n", up.Barcode, err)
 				} else {
