@@ -3,6 +3,7 @@ package main
 import (
 	"arbitraj-bot/config"
 	"arbitraj-bot/core"
+	"arbitraj-bot/database"
 	"arbitraj-bot/services"
 	"arbitraj-bot/utils"
 	"bufio"
@@ -17,6 +18,7 @@ import (
 )
 
 func main() {
+	database.InitDB()
 	utils.InitLogger()
 	client := resty.New()
 	cfg, err := config.LoadConfig("config/config.json")
@@ -56,6 +58,30 @@ func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader
 
 	fmt.Println("\n[1/3] Ürünler çekiliyor...")
 	pttList := services.FetchAllPttProducts(client, cfg)
+
+	if len(pttList) == 0 {
+		fmt.Println("[-] Ürün bulunamadı.")
+		return
+	}
+
+	// --- VERİTABANINA KAYDETME BÖLÜMÜ ---
+	fmt.Printf("[+] %d ürün veritabanına işleniyor...\n", len(pttList))
+	for _, p := range pttList {
+		// 1. Barkodu temizle ve normalize et
+		cleanBarcode := utils.CleanPttBarcode(p.Barkod)
+
+		localImagePath := ""
+		if p.ResimURL != "" {
+			path, err := utils.DownloadImage(p.ResimURL, p.Barkod)
+			if err == nil {
+				localImagePath = path
+			}
+		}
+
+		database.SavePttProduct(cleanBarcode, p.UrunAdi, p.MevcutStok, p.MevcutFiyat, p.Barkod, localImagePath)
+	}
+	fmt.Println("[+] Veritabanı güncellendi.")
+
 	path := utils.SavePttToExcel(pttList)
 
 	fmt.Printf("\nExcel Hazır: %s\nKAYDET ve KAPATIP ENTER'a bas...\n", path)

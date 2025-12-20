@@ -58,6 +58,7 @@ type PttProduct struct {
 	MevcutFiyat float64 `xml:"KDVsiz"`
 	KdvOrani    int     `xml:"KDVOran"`
 	Aktif       bool    `xml:"Aktif"`
+	ResimURL    string  `xml:"UrunResim"`
 }
 
 type PttStockPriceUpdate struct {

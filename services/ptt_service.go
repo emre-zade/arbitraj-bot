@@ -2,6 +2,7 @@ package services
 
 import (
 	"arbitraj-bot/core"
+	"arbitraj-bot/database"
 	"arbitraj-bot/utils"
 	"encoding/json"
 	"encoding/xml"
@@ -84,6 +85,10 @@ func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduc
 	var result core.PttListResponse
 	xml.Unmarshal(resp.Body(), &result)
 
+	if len(result.Products) > 0 {
+		fmt.Printf("[DEBUG] İlk Ürün XML Verisi: %+v\n", result.Products[0])
+	}
+
 	// API'den gelen listeden sadece ilk 10 tanesini alıyoruz
 	if len(result.Products) > 10 {
 		allProducts = result.Products[:10]
@@ -142,6 +147,26 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 				}
 			}
 			return 0
+		}
+
+		// Detay verisi geldiğinde resim indirme işlemini tetikleyelim
+		photos, _ := raw["photos"].([]interface{})
+		if len(photos) > 0 {
+			firstPhoto, _ := photos[0].(map[string]interface{})
+			photoURL, _ := firstPhoto["url"].(string)
+
+			if photoURL != "" {
+				// Barkodu çekelim (raw içinde mevcut)
+				barcode, _ := raw["barcode"].(string)
+				cleanBarcode := utils.CleanPttBarcode(barcode)
+
+				// Resmi indir
+				localPath, err := utils.DownloadImage(photoURL, cleanBarcode)
+				if err == nil {
+					// Veritabanındaki resim yolunu güncelle
+					database.UpdateProductImage(cleanBarcode, localPath)
+				}
+			}
 		}
 
 		// 2. PAYLOAD OLUŞTURMA (Senin yapındaki alanlarla %100 uyumlu)
