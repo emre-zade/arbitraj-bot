@@ -106,7 +106,6 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 	updateURL := fmt.Sprintf("https://tedarik-api.pttavm.com/product/update/%s", productID)
 
 	for {
-		// 1. Ürün detayını çek
 		resp, err := client.R().
 			SetHeader("authorization", "Bearer "+cfg.Ptt.Token).
 			SetHeader("accept", "application/json").
@@ -116,22 +115,15 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			return "", err
 		}
 
-		// DURUM: Token geçersiz (401 Unauthorized)
 		if resp.StatusCode() == 401 {
 			fmt.Println("\n[!] PttAVM Token süresi dolmuş veya geçersiz!")
 			fmt.Print("[?] Lütfen yeni Bearer Token'ı yapıştırıp ENTER'a basın: ")
-
-			// Terminalden yeni token'ı oku
 			var newToken string
 			fmt.Scanln(&newToken)
-
-			// Config içindeki token'ı güncelle (Pointer olduğu için tüm programda güncellenir)
 			cfg.Ptt.Token = strings.TrimSpace(newToken)
-			fmt.Println("[+] Token güncellendi, işlem tekrar deneniyor...")
-			continue // Döngü başına dön ve yeni token ile tekrar GET isteği at
+			continue
 		}
 
-		// Yanıtı işle
 		var result map[string]interface{}
 		json.Unmarshal(resp.Body(), &result)
 		raw, ok := result["data"].(map[string]interface{})
@@ -139,7 +131,6 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			return "HATA: Detay verisi 'data' katmanında bulunamadı", nil
 		}
 
-		// GÜVENLİ SAYI DÖNÜŞTÜRÜCÜ YARDIMCISI
 		getFloat := func(key string) float64 {
 			if val, exists := raw[key]; exists && val != nil {
 				if f, ok := val.(float64); ok {
@@ -149,27 +140,36 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			return 0
 		}
 
-		// Detay verisi geldiğinde resim indirme işlemini tetikleyelim
-		photos, _ := raw["photos"].([]interface{})
-		if len(photos) > 0 {
-			firstPhoto, _ := photos[0].(map[string]interface{})
-			photoURL, _ := firstPhoto["url"].(string)
+		// --- GÜVENLİ RESİM İNDİRME BÖLÜMÜ ---
+		rawPhotos := raw["photos"]
+		if photos, ok := rawPhotos.([]interface{}); ok && len(photos) > 0 {
+			var photoURL string
+			p := photos[0] // İlk fotoğrafı alıyoruz
+
+			// Resim verisi string mi yoksa map mi kontrol et (Debug'da gördüğün hatayı çözer)
+			switch v := p.(type) {
+			case string:
+				photoURL = v
+			case map[string]interface{}:
+				if u, ok := v["url"].(string); ok {
+					photoURL = u
+				}
+			}
 
 			if photoURL != "" {
-				// Barkodu çekelim (raw içinde mevcut)
-				barcode, _ := raw["barcode"].(string)
-				cleanBarcode := utils.CleanPttBarcode(barcode)
+				// API için orijinal barkod (raw["barcode"]), Dosya/DB için temiz barkod (CleanPttBarcode)
+				rawBarcode, _ := raw["barcode"].(string)
+				cleanBarcode := utils.CleanPttBarcode(rawBarcode)
 
-				// Resmi indir
+				// Resmi temiz barkod adıyla indir
 				localPath, err := utils.DownloadImage(photoURL, cleanBarcode)
 				if err == nil {
-					// Veritabanındaki resim yolunu güncelle
+					// DB'yi temiz barkod üzerinden güncelle (Aynı ürün eşleşmesi için)
 					database.UpdateProductImage(cleanBarcode, localPath)
 				}
 			}
 		}
 
-		// 2. PAYLOAD OLUŞTURMA (Senin yapındaki alanlarla %100 uyumlu)
 		payload := map[string]interface{}{
 			"contents":                   raw["contents"],
 			"vat_ratio":                  fmt.Sprintf("%.0f", getFloat("vat_ratio")),
@@ -187,21 +187,17 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			"warranty_period":            "0",
 			"warranty_company":           "",
 			"quantity":                   strconv.Itoa(stock),
-			"barcode":                    raw["barcode"],
+			"barcode":                    raw["barcode"], // PTT'ye orijinal barkodu yolluyoruz
 			"ean_isbn_code":              "",
 			"gtin_no":                    "",
 			"mpn":                        "",
-			"photos":                     formatPhotos(raw["photos"]),
+			"photos":                     formatPhotos(rawPhotos),
 			"evo_category_id":            "1090",
 			"category_properties":        raw["category_properties"],
 			"product_id":                 productID,
 		}
 
-		// DEBUG LOG
-		fmt.Printf("\n[DEBUG] PttAVM Giden Paket (ID: %s):\n", productID)
 		utils.LogJSON(payload)
-
-		// 3. GÜNCELLEME İSTEĞİNİ GÖNDER
 		updateResp, err := client.R().
 			SetHeader("authorization", "Bearer "+cfg.Ptt.Token).
 			SetHeader("content-type", "application/json").
@@ -212,12 +208,18 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 		if err != nil {
 			return "", err
 		}
-
-		// Eğer güncelleme sırasında da 401 gelirse döngü devam eder, aksi halde sonucu döner
 		if updateResp.StatusCode() == 401 {
 			continue
 		}
 
+		if updateResp.IsSuccess() {
+			// PTT'ye gönderdiğimiz başarılı veriyi kendi DB'mize de yazıyoruz
+			rawBarcode, _ := raw["barcode"].(string)
+			cleanBarcode := utils.CleanPttBarcode(rawBarcode)
+
+			database.UpdateProductStockPrice(cleanBarcode, stock, price)
+			fmt.Printf("[+] DB Güncellendi: %s -> Stok: %d, Fiyat: %.2f\n", cleanBarcode, stock, price)
+		}
 		return updateResp.String(), nil
 	}
 }

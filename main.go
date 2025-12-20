@@ -77,8 +77,9 @@ func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader
 				localImagePath = path
 			}
 		}
-
-		database.SavePttProduct(cleanBarcode, p.UrunAdi, p.MevcutStok, p.MevcutFiyat, p.Barkod, localImagePath)
+		// KDV Dahil Fiyat Hesaplama (Örn: 100 * 1.20 = 120)
+		kdvDahilFiyat := p.MevcutFiyat * (1 + float64(p.KdvOrani)/100.0)
+		database.SavePttProduct(cleanBarcode, p.UrunAdi, p.MevcutStok, kdvDahilFiyat, p.Barkod, localImagePath)
 	}
 	fmt.Println("[+] Veritabanı güncellendi.")
 

@@ -56,3 +56,11 @@ func UpdateProductImage(barcode string, imagePath string) {
 		log.Printf("DB Resim Güncelleme Hatası: %v", err)
 	}
 }
+
+func UpdateProductStockPrice(barcode string, stock int, price float64) {
+	query := `UPDATE products SET stock = ?, price = ? WHERE barcode = ?`
+	_, err := DB.Exec(query, stock, price, barcode)
+	if err != nil {
+		log.Printf("DB Stok/Fiyat Güncelleme Hatası: %v", err)
+	}
+}
