@@ -6,7 +6,6 @@ import (
 	"os"
 )
 
-// SaveConfig, güncel konfigürasyon yapısını belirtilen yola JSON olarak kaydeder.
 func SaveConfig(path string, config core.Config) error {
 	file, err := os.Create(path)
 	if err != nil {

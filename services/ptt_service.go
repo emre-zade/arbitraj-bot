@@ -14,7 +14,7 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-/*
+/* BÜTÜN ÜRÜNLERİ ÇEKMEK İÇİN
 func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduct {
 	var allProducts []core.PttProduct
 	page := 0

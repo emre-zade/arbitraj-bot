@@ -48,7 +48,6 @@ type PazaramaProductResponse struct {
 	Success bool              `json:"success"`
 }
 
-// --- PTTAVM MODELLERİ (Ham veriye göre %100 eşleşen) ---
 // PttProduct: Hem XML'den veri çekerken hem REST API ile güncellerken kullanacağız
 type PttProduct struct {
 	UrunId      int64   `xml:"UrunId"` // REST API'nin beklediği product_id burası
@@ -72,8 +71,6 @@ type PttListResponse struct {
 	XMLName  xml.Name     `xml:"Envelope"`
 	Products []PttProduct `xml:"Body>StokKontrolListesiResponse>StokKontrolListesiResult>StokKontrolDetay"`
 }
-
-// core/common_models.go içerisine ekleyin:
 
 type PttLoginRequest struct {
 	Email    string `json:"panel_email"`
