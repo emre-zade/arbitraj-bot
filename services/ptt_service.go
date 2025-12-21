@@ -1,6 +1,7 @@
 package services
 
 import (
+	"arbitraj-bot/config"
 	"arbitraj-bot/core"
 	"arbitraj-bot/database"
 	"arbitraj-bot/utils"
@@ -121,6 +122,16 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			var newToken string
 			fmt.Scanln(&newToken)
 			cfg.Ptt.Token = strings.TrimSpace(newToken)
+
+			err := config.SaveConfig("config/config.json", *cfg)
+			if err != nil {
+				fmt.Printf("[!] Config kaydedilemedi: %v\n", err)
+			} else {
+				fmt.Println("[+] Yeni token config.json dosyasına başarıyla kaydedildi.")
+			}
+
+			fmt.Println("[+] Token güncellendi, işlem tekrar deneniyor...")
+
 			continue
 		}
 

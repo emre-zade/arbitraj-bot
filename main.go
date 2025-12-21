@@ -42,9 +42,9 @@ func main() {
 
 		switch secim {
 		case "1":
-			runPazaramaOperation(client, cfg, reader)
+			runPazaramaOperation(client, &cfg, reader)
 		case "2":
-			runPttOperation(client, cfg, reader)
+			runPttOperation(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -54,10 +54,10 @@ func main() {
 	}
 }
 
-func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader) {
+func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 
 	fmt.Println("\n[1/3] Ürünler çekiliyor...")
-	pttList := services.FetchAllPttProducts(client, cfg)
+	pttList := services.FetchAllPttProducts(client, *cfg)
 
 	if len(pttList) == 0 {
 		fmt.Println("[-] Ürün bulunamadı.")
@@ -152,7 +152,7 @@ func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader
 		choice, _ := reader.ReadString('\n')
 		if strings.ToLower(strings.TrimSpace(choice)) == "y" {
 			for _, up := range updates {
-				res, err := services.UpdatePttStockPriceRest(client, &cfg, up.ProductID, up.Stock, up.Price)
+				res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
 				if err != nil {
 					fmt.Printf("    [%s] -> Bağlantı Hatası: %v\n", up.Barcode, err)
 				} else {
@@ -165,7 +165,7 @@ func runPttOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader
 	}
 }
 
-func runPazaramaOperation(client *resty.Client, cfg core.Config, reader *bufio.Reader) {
+func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 	fmt.Println("\n>>> PAZARAMA OPERASYONU BAŞLATILDI <<<")
 	token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
 	if err != nil {
