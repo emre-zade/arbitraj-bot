@@ -57,7 +57,7 @@ func main() {
 func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 
 	fmt.Println("\n[1/3] Ürünler çekiliyor...")
-	pttList := services.FetchAllPttProducts(client, *cfg)
+	pttList := services.FetchAllPttProducts(client, cfg)
 
 	if len(pttList) == 0 {
 		fmt.Println("[-] Ürün bulunamadı.")
@@ -147,20 +147,17 @@ func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reade
 		})
 	}
 
-	if len(updates) > 0 {
-		fmt.Printf("\n[!!!] %d değişiklik onaylanıyor mu? (y/n): ", len(updates))
-		choice, _ := reader.ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(choice)) == "y" {
-			for _, up := range updates {
-				res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
-				if err != nil {
-					fmt.Printf("    [%s] -> Bağlantı Hatası: %v\n", up.Barcode, err)
-				} else {
-					fmt.Printf("    [%s] -> %s\n", up.Barcode, res)
-				}
-
-				time.Sleep(250 * time.Millisecond)
+	if len(updates) > 0 && core.AskConfirmation("PTT ürünleri güncellensin mi?") {
+		for _, up := range updates {
+			// Unutma: UpdatePttStockPriceRest içinde hem resim iniyor hem de başarılıysa DB güncelleniyor
+			res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
+			if err != nil {
+				fmt.Printf("[-] %s Güncelleme Hatası: %v\n", up.Barcode, err)
+			} else {
+				fmt.Printf("[+] %s Başarıyla Güncellendi: %s\n", up.Barcode, res)
 			}
+
+			time.Sleep(250 * time.Millisecond)
 		}
 	}
 }
@@ -172,7 +169,21 @@ func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.
 		fmt.Printf("[-] Giriş hatası: %v\n", err)
 		return
 	}
-	products, _ := services.FetchProducts(client, token)
+
+	products, err := services.FetchProducts(client, token)
+	if err != nil {
+		fmt.Printf("[-] Ürünler çekilemedi: %v\n", err)
+		return
+	}
+
+	// --- VERİTABANINA KAYDETME VE EŞLEŞTİRME ---
+	fmt.Printf("[+] %d Pazarama ürünü veritabanına işleniyor...\n", len(products))
+	for _, p := range products {
+		// Pazarama'dan gelen 'Code' zaten temiz barkod olduğu için direkt kullanıyoruz
+		database.SavePazaramaProduct(p.Code, p.Name, p.StockCount, p.SalePrice)
+	}
+	fmt.Println("[+] Pazarama verileri veritabanı ile eşleştirildi.")
+
 	_ = utils.SaveToExcel(products)
 	fmt.Println("[OK] Excel oluşturuldu. Düzenleyip ENTER'a bas...")
 	reader.ReadString('\n')

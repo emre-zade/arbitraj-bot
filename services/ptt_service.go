@@ -14,8 +14,7 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-/* BÜTÜN ÜRÜNLERİ ÇEKMEK İÇİN
-func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduct {
+func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProduct {
 	var allProducts []core.PttProduct
 	page := 0
 	for {
@@ -54,9 +53,9 @@ func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduc
 	}
 	return allProducts
 }
-*/
 
-func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduct {
+/*
+func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProduct {
 	var allProducts []core.PttProduct
 	// Test için sadece 0. sayfayı (ilk 100 ürünün olduğu sayfa) hedefliyoruz
 	page := 0
@@ -101,6 +100,7 @@ func FetchAllPttProducts(client *resty.Client, cfg core.Config) []core.PttProduc
 
 	return allProducts
 }
+*/
 
 func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID string, stock int, price float64) (string, error) {
 	getURL := fmt.Sprintf("https://tedarik-api.pttavm.com/product/detail/%s", productID)
