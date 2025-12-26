@@ -49,16 +49,24 @@ type PazaramaProductResponse struct {
 }
 
 type PttProduct struct {
-	Barkod         string  // Genelde Satıcı Stok Kodu ile aynı tutulur veya Excel'e eklenir
-	StokKodu       string  // Excel A Sütunu (Satıcı Stok Kodu)
-	UrunAdi        string  // Excel B Sütunu
-	Fiyat          float64 // Excel C Sütunu
-	Stok           int     // Excel D Sütunu
-	HazirlikSuresi int     // Excel E Sütunu (Kargoya Veriliş Süresi)
-	Marka          string  // Excel F Sütunu
-	KategoriId     int     // Excel G Sütunu (En Alt Kategori ID'si buraya gelmeli)
-	Aciklama       string  // Excel J Sütunu (Ürün Açıklaması)
-	Gorsel1        string  // Excel K Sütunu (Görsel 1)
+	UrunId      int64   `xml:"UrunId"`
+	Barkod      string  `xml:"Barkod"`
+	UrunAdi     string  `xml:"UrunAdi"`
+	MevcutStok  int     `xml:"Miktar"` // API'den gelen stok
+	MevcutFiyat float64 `xml:"KDVsiz"` // API'den gelen fiyat
+	KdvOrani    int     `xml:"KDVOran"`
+	Aktif       bool    `xml:"Aktif"`
+	ResimURL    string  `xml:"UrunResim"`
+
+	// Excel'den toplu yükleme (Upload) için ek alanlar
+	StokKodu       string
+	Fiyat          float64
+	Stok           int
+	HazirlikSuresi int
+	Marka          string
+	KategoriId     int
+	Aciklama       string
+	Gorsel1        string
 }
 
 type PttStockPriceUpdate struct {

@@ -126,54 +126,29 @@ func FormatHBPrice(price float64) string {
 	return strings.ReplaceAll(fmt.Sprintf("%.2f", price), ".", ",")
 }
 
-func SavePttToExcel(products []core.PttProduct, filePath string) error {
+func SavePttToExcel(products []core.PttProduct) string {
 	f := excelize.NewFile()
-	sheetName := "PTT Ürün Listesi"
-	f.SetSheetName("Sheet1", sheetName)
+	sheet := "Analiz"
+	f.SetSheetName("Sheet1", sheet)
 
-	// 1. Başlıkları (Headers) Yaz (Senin verdiğin sıralama)
-	headers := []string{
-		"Satıcı Stok Kodu", "Ürün Adı", "Fiyat", "Stok",
-		"Kargoya Veriliş Süresi", "Marka", "En Alt Kategori",
-		"Ana Kategori", "En Temel Kategori", "Ürün Açıklaması",
-		"Görsel 1", "Görsel 2", "Görsel 3",
-	}
-
-	for i, header := range headers {
+	headers := []string{"Ürün Adı", "Barkod", "Stok", "KDV", "Satış Fiyatı", "İŞLEM", "YENİ STOK", "ProductID"}
+	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheetName, cell, header)
+		f.SetCellValue(sheet, cell, h)
 	}
 
-	// 2. Verileri Yaz
 	for i, p := range products {
-		rowIdx := i + 2
-		// A: Satıcı Stok Kodu
-		f.SetCellValue(sheetName, fmt.Sprintf("A%d", rowIdx), p.StokKodu)
-		// B: Ürün Adı
-		f.SetCellValue(sheetName, fmt.Sprintf("B%d", rowIdx), p.UrunAdi)
-		// C: Fiyat
-		f.SetCellValue(sheetName, fmt.Sprintf("C%d", rowIdx), p.Fiyat)
-		// D: Stok
-		f.SetCellValue(sheetName, fmt.Sprintf("D%d", rowIdx), p.Stok)
-		// E: Kargoya Veriliş Süresi
-		f.SetCellValue(sheetName, fmt.Sprintf("E%d", rowIdx), p.HazirlikSuresi)
-		// F: Marka
-		f.SetCellValue(sheetName, fmt.Sprintf("F%d", rowIdx), p.Marka)
-		// G: En Alt Kategori (ID)
-		f.SetCellValue(sheetName, fmt.Sprintf("G%d", rowIdx), p.KategoriId)
-		// J: Ürün Açıklaması (Index 10 -> J)
-		f.SetCellValue(sheetName, fmt.Sprintf("J%d", rowIdx), p.Aciklama)
-		// K: Görsel 1
-		f.SetCellValue(sheetName, fmt.Sprintf("K%d", rowIdx), p.Gorsel1)
+		row := i + 2
+		f.SetCellValue(sheet, "A"+strconv.Itoa(row), p.UrunAdi)
+		f.SetCellValue(sheet, "B"+strconv.Itoa(row), p.Barkod)
+		f.SetCellValue(sheet, "C"+strconv.Itoa(row), p.MevcutStok)
+		f.SetCellValue(sheet, "D"+strconv.Itoa(row), p.KdvOrani)
+		f.SetCellValue(sheet, "E"+strconv.Itoa(row), p.MevcutFiyat)
+		f.SetCellValue(sheet, "H"+strconv.Itoa(row), strconv.FormatInt(p.UrunId, 10))
 	}
 
-	// Dosyayı kaydet
-	if err := f.SaveAs(filePath); err != nil {
-		return err
-	}
-
-	fmt.Printf("[+] Veriler başarıyla %s dosyasına kaydedildi.\n", filePath)
-	return nil
+	f.SaveAs(PttExcelPath)
+	return PttExcelPath
 }
 
 func GetPttExcelRows() ([][]string, error) {
@@ -182,7 +157,7 @@ func GetPttExcelRows() ([][]string, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return f.GetRows("PttAVM Envanter")
+	return f.GetRows("Analiz")
 }
 
 func ExportHBProductsToExcel(products []core.HBProduct, fileName string) error {

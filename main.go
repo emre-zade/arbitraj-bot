@@ -47,9 +47,9 @@ func main() {
 		case "1":
 			runPazaramaOperation(client, &cfg, reader)
 		case "2":
-			runPttOperation(client, &cfg, reader)
-		case "3":
 			runPttExcelUploadOperation(client, &cfg)
+		case "3":
+			runHbSitSeedOperation(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -71,6 +71,7 @@ func runPttExcelUploadOperation(client *resty.Client, cfg *core.Config) {
 
 	rows, err := f.GetRows(f.GetSheetList()[0])
 	if err != nil {
+		fmt.Printf("[-] Excel okuma hatası: %v\n", err)
 		return
 	}
 

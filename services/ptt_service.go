@@ -243,7 +243,7 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 			rawBarcode, _ := raw["barcode"].(string)
 			cleanBarcode := utils.CleanPttBarcode(rawBarcode)
 
-			database.UpdateProductStockPrice(cleanBarcode, stock, price)
+			database.UpdatePttStockPriceInDB(cleanBarcode, stock, price)
 			fmt.Printf("[+] DB Güncellendi: %s -> Stok: %d, Fiyat: %.2f\n", cleanBarcode, stock, price)
 		}
 		return updateResp.String(), nil
@@ -319,11 +319,18 @@ func FetchAndSyncPttCategories(client *resty.Client, username, password string) 
 }
 
 func UploadProductToPtt(client *resty.Client, username, password string, product core.PttProduct) error {
-	url := "https://ws.epttavm.com:83/service.svc"
+	url := "https://ws.pttavm.com:93/service.svc"
 
-	// PTT SOAP XML yapısı (CDATA ile HTML karakterlerini koruyoruz)
 	soapXML := fmt.Sprintf(`
 	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken>
+	            <wsse:Username>%s</wsse:Username>
+	            <wsse:Password>%s</wsse:Password>
+	         </wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
 	   <soapenv:Body>
 	      <ser:UrunKaydet>
 	         <ser:kullaniciAdi>%s</ser:kullaniciAdi>
@@ -347,8 +354,8 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 	      </ser:UrunKaydet>
 	   </soapenv:Body>
 	</soapenv:Envelope>`,
-		username, password,
-		product.StokKodu, product.UrunAdi, product.Marka,
+		username, password, username, password,
+		product.Barkod, product.UrunAdi, product.Marka,
 		product.KategoriId, product.Stok, product.Fiyat,
 		product.HazirlikSuresi, product.Aciklama, product.Gorsel1)
 
@@ -362,8 +369,19 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 		return err
 	}
 
+	// AYRINTILI LOGLAMA
+	fmt.Printf(" [HTTP Durumu]: %d %s\n", resp.StatusCode(), resp.Status())
+
+	body := resp.String()
+	if body == "" {
+		fmt.Println(" [PTT Yanıtı]: <BOŞ YANIT GELDİ>")
+	} else {
+		fmt.Printf(" [PTT Yanıtı]: %s\n", body)
+	}
+
+	// PTT bazen 200 dönse de içinde hata mesajı verebilir
 	if resp.IsError() {
-		return fmt.Errorf("PTT Yükleme Hatası (%d): %s", resp.StatusCode(), resp.String())
+		return fmt.Errorf("PTT API Hatası (%d): %s", resp.StatusCode(), body)
 	}
 
 	return nil
