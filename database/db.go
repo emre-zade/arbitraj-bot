@@ -43,29 +43,6 @@ func InitDB() {
 	}
 }
 
-func SaveHbProduct(sku, barcode string, stock int, price float64, imageURL string) {
-	// Barkod boşsa SKU'yu kullan (PTT için barkod şart)
-	effectiveBarcode := barcode
-	if effectiveBarcode == "" {
-		effectiveBarcode = "HB-" + sku
-	}
-
-	query := `
-	INSERT INTO products (barcode, hb_sku, stock, price, image_path, updated_at) 
-	VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(hb_sku) DO UPDATE SET
-		barcode = excluded.barcode,
-		stock = excluded.stock,
-		price = excluded.price,
-		image_path = excluded.image_path,
-		updated_at = CURRENT_TIMESTAMP;`
-
-	_, err := DB.Exec(query, effectiveBarcode, sku, stock, price, imageURL)
-	if err != nil {
-		log.Printf("[-] DB Kayıt Hatası (%s): %v", sku, err)
-	}
-}
-
 func SavePttProduct(barcode, name string, stock int, price float64, originalBarcode string, imagePath string) {
 	// Bu sorgu: Eğer barkod varsa sadece PTT bilgilerini günceller, pazarama_code veya hb_sku'ya dokunmaz.
 	query := `
@@ -116,5 +93,26 @@ func UpdateProductStockPrice(barcode string, stock int, price float64) {
 	_, err := DB.Exec(query, stock, price, barcode)
 	if err != nil {
 		log.Printf("DB Stok/Fiyat Güncelleme Hatası: %v", err)
+	}
+}
+
+func SaveHbProduct(sku, barcode, productName string, stock int, price float64) {
+	if barcode == "" {
+		barcode = sku
+	}
+
+	query := `
+	INSERT INTO products (barcode, product_name, hb_sku, stock, price, updated_at) 
+	VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(hb_sku) DO UPDATE SET
+		barcode = excluded.barcode,
+		product_name = excluded.product_name,
+		stock = excluded.stock,
+		price = excluded.price,
+		updated_at = CURRENT_TIMESTAMP;`
+
+	_, err := DB.Exec(query, barcode, productName, sku, stock, price)
+	if err != nil {
+		log.Printf("[-] DB Kayıt Hatası (SKU: %s): %v", sku, err)
 	}
 }

@@ -9,12 +9,14 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/xuri/excelize/v2"
 )
 
 func main() {
@@ -47,7 +49,7 @@ func main() {
 		case "2":
 			runPttOperation(client, &cfg, reader)
 		case "3":
-			runHbFetchOperation(client, &cfg, reader)
+			runHbSitSeedOperation(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -196,30 +198,46 @@ func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.
 	}
 }
 
-func runHbFetchOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	fmt.Println("\n[*] Hepsiburada (SIT) verileri çekiliyor...")
+func runHbSitSeedOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	fmt.Println("\n[*] Hepsiburada SIT Paneli 'Altın Excel' verileriyle güncelleniyor...")
+
 	hbProducts, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
 	if err != nil {
-		fmt.Printf("[-] Hepsiburada Hatası: %v\n", err)
+		fmt.Printf("[-] Ürünler çekilemedi: %v\n", err)
 		return
 	}
 
-	fmt.Printf("[+] %d adet ürün bulundu.\n", len(hbProducts))
-	fmt.Print("Ürünleri veritabanına kaydedip Excel çıktısı alalım mı? (y/n): ")
-	onay, _ := reader.ReadString('\n')
+	f, err := excelize.OpenFile("storage/altin_excel.xlsx")
+	if err != nil {
+		fmt.Printf("[-] Excel hatası: %v\n", err)
+		return
+	}
+	defer f.Close()
+	rows, _ := f.GetRows(f.GetSheetList()[0])
 
-	if strings.TrimSpace(strings.ToLower(onay)) == "y" {
-		for _, hb := range hbProducts {
-			database.SaveHbProduct(hb.SKU, hb.Barcode, hb.Stock, hb.Price, hb.ImageURL)
+	rand.Seed(time.Now().UnixNano())
+
+	for i, hb := range hbProducts {
+		cleanTitle := "Hepsiburada Test Ürünü"
+		if i+1 < len(rows) && len(rows[i+1]) > 1 {
+			cleanTitle = rows[i+1][1] // B Sütunu: Temiz Başlık
 		}
 
-		// Excel Kaydı
-		fileName := "hb_test_urunler.xlsx"
-		err := utils.ExportHBProductsToExcel(hbProducts, fileName)
-		if err != nil {
-			fmt.Printf("[-] Excel oluşturulamadı: %v\n", err)
+		randomPrice := float64(rand.Intn(2501) + 500)
+		randomStock := rand.Intn(100) + 10
+
+		// Önce Fiyat ve Stok Güncelle
+		errPrice := services.UpdateHBPriceStock(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.SKU, randomPrice, randomStock)
+
+		// Sonra İsim Güncelle (Hata verse de devam etsin diye errPrice kontrolü yapıyoruz)
+		_ = services.UpdateHBProductName(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.SKU, cleanTitle)
+
+		if errPrice == nil {
+			database.SaveHbProduct(hb.SKU, hb.Barcode, cleanTitle, randomStock, randomPrice)
+			fmt.Printf(" [+] %s -> Başarıyla güncellendi: %.2f TL\n", hb.SKU, randomPrice)
 		} else {
-			fmt.Printf("[+] Başarılı! Veriler DB'ye yazıldı ve %s oluşturuldu.\n", fileName)
+			fmt.Printf(" [!] %s Hatası: %v\n", hb.SKU, errPrice)
 		}
+		time.Sleep(150 * time.Millisecond)
 	}
 }
