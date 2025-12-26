@@ -38,6 +38,22 @@ func InitDB() {
 	}
 }
 
+func SaveHbProduct(sku, barcode string, stock int, price float64) {
+	query := `
+	INSERT INTO products (barcode, hb_sku, stock, price, updated_at) 
+	VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(barcode) DO UPDATE SET
+		hb_sku = excluded.hb_sku,
+		stock = excluded.stock,
+		price = excluded.price,
+		updated_at = CURRENT_TIMESTAMP;`
+
+	_, err := DB.Exec(query, barcode, sku, stock, price)
+	if err != nil {
+		log.Printf("DB Kayıt Hatası: %v", err)
+	}
+}
+
 func SavePttProduct(barcode, name string, stock int, price float64, originalBarcode string, imagePath string) {
 	// Bu sorgu: Eğer barkod varsa sadece PTT bilgilerini günceller, pazarama_code veya hb_sku'ya dokunmaz.
 	query := `

@@ -34,6 +34,7 @@ func main() {
 		fmt.Println("========================================")
 		fmt.Println("1- Pazarama Operasyonu")
 		fmt.Println("2- PttAVM Operasyonu")
+		fmt.Println("3- HB Operasyonu")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
 
@@ -45,6 +46,8 @@ func main() {
 			runPazaramaOperation(client, &cfg, reader)
 		case "2":
 			runPttOperation(client, &cfg, reader)
+		case "3":
+			runHbFetchOperation(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -191,4 +194,34 @@ func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.
 	if core.AskConfirmation("Pazarama güncellensin mi?") {
 		utils.ProcessExcelAndUpdate(client, token)
 	}
+}
+
+func runHbFetchOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	fmt.Println("\n[*] Hepsiburada (SIT) verileri dökümana göre çekiliyor...")
+
+	hbProducts, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
+	if err != nil {
+		fmt.Printf("[-] Hepsiburada Hatası: %v\n", err)
+		return
+	}
+
+	if len(hbProducts) == 0 {
+		fmt.Println("[!] Ürün bulunamadı. Lütfen SIT panelinden ürünlerin yüklü olduğunu teyit edin.")
+		return
+	}
+
+	fmt.Printf("[+] %d adet ürün çekildi.\n", len(hbProducts))
+
+	for _, hb := range hbProducts {
+		fmt.Println("\n----------------------------------------")
+		fmt.Printf("SKU    : %s\n", hb.SKU)
+		fmt.Printf("BARKOD : %s\n", hb.Barcode)
+		fmt.Printf("FİYAT  : %.2f TL\n", hb.Price)
+		fmt.Printf("STOK   : %d\n", hb.Stock)
+
+		database.SaveHbProduct(hb.SKU, hb.Barcode, hb.Stock, hb.Price)
+		fmt.Println("[+] Kaydedildi.")
+
+	}
+	fmt.Println("\n[+] İşlem bitti.")
 }

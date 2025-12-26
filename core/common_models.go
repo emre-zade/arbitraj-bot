@@ -93,3 +93,18 @@ type PttLoginResponse struct {
 	} `json:"data"`
 	IsSuccess bool `json:"isSuccess"`
 }
+
+// HBProduct: Hepsiburada API'sinden gelen canlı veriler için
+type HBProduct struct {
+	SKU     string
+	Barcode string
+	Price   float64
+	Stock   int
+}
+
+// MasterProduct: Excel'den yükleyeceğimiz temiz veriler için
+type MasterProduct struct {
+	SKU         string
+	CleanTitle  string
+	TargetBrand string
+}
