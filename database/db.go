@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"log"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -11,12 +12,17 @@ var DB *sql.DB
 
 func InitDB() {
 	var err error
+	// Klasör kontrolü
+	if _, err := os.Stat("./storage"); os.IsNotExist(err) {
+		os.Mkdir("./storage", 0755)
+	}
+
 	DB, err = sql.Open("sqlite3", "./storage/arbitraj.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Tabloyu genişletiyoruz: pazarama_code ve hb_sku eklendi
+	// Tabloyu hb_sku UNIQUE olacak şekilde revize ediyoruz
 	sqlStmt := `
 	CREATE TABLE IF NOT EXISTS products (
 		barcode TEXT PRIMARY KEY,
@@ -24,33 +30,39 @@ func InitDB() {
 		stock INTEGER,
 		price REAL,
 		delivery_time INTEGER,
-		ptt_barcode TEXT,     -- PttAVM'nin uzun barkodu
-		pazarama_code TEXT,   -- Pazarama Ürün Kodu (Temiz Barkod)
-		hb_sku TEXT,          -- Hepsiburada SKU
+		ptt_barcode TEXT,
+		pazarama_code TEXT,
+		hb_sku TEXT UNIQUE, 
 		image_path TEXT,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
 	_, err = DB.Exec(sqlStmt)
 	if err != nil {
-		log.Printf("%q: %s\n", err, sqlStmt)
-		return
+		log.Printf("Tablo hatası: %v", err)
 	}
 }
 
-func SaveHbProduct(sku, barcode string, stock int, price float64) {
+func SaveHbProduct(sku, barcode string, stock int, price float64, imageURL string) {
+	// Barkod boşsa SKU'yu kullan (PTT için barkod şart)
+	effectiveBarcode := barcode
+	if effectiveBarcode == "" {
+		effectiveBarcode = "HB-" + sku
+	}
+
 	query := `
-	INSERT INTO products (barcode, hb_sku, stock, price, updated_at) 
-	VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(barcode) DO UPDATE SET
-		hb_sku = excluded.hb_sku,
+	INSERT INTO products (barcode, hb_sku, stock, price, image_path, updated_at) 
+	VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(hb_sku) DO UPDATE SET
+		barcode = excluded.barcode,
 		stock = excluded.stock,
 		price = excluded.price,
+		image_path = excluded.image_path,
 		updated_at = CURRENT_TIMESTAMP;`
 
-	_, err := DB.Exec(query, barcode, sku, stock, price)
+	_, err := DB.Exec(query, effectiveBarcode, sku, stock, price, imageURL)
 	if err != nil {
-		log.Printf("DB Kayıt Hatası: %v", err)
+		log.Printf("[-] DB Kayıt Hatası (%s): %v", sku, err)
 	}
 }
 

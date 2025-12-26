@@ -160,3 +160,32 @@ func GetPttExcelRows() ([][]string, error) {
 	defer f.Close()
 	return f.GetRows("PttAVM Envanter")
 }
+
+func ExportHBProductsToExcel(products []core.HBProduct, fileName string) error {
+	f := excelize.NewFile()
+	sheet := "HB_Urunler"
+	f.NewSheet(sheet)
+	f.DeleteSheet("Sheet1")
+
+	// Başlıklar
+	headers := []string{"SKU", "Barkod", "Fiyat", "Stok", "Resim URL"}
+	for i, h := range headers {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	// Veriler
+	for i, p := range products {
+		row := i + 2
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), p.SKU)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), p.Barcode)
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), p.Price)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), p.Stock)
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), p.ImageURL)
+	}
+
+	if err := f.SaveAs(fileName); err != nil {
+		return err
+	}
+	return nil
+}

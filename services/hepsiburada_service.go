@@ -8,10 +8,10 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
+// services/hepsiburada_service.go
+
 func FetchHBProducts(client *resty.Client, merchantID string, secretKey string) ([]core.HBProduct, error) {
 	var allProducts []core.HBProduct
-
-	// Dökümandaki tam URL yapısı
 	baseURL := "https://listing-external-sit.hepsiburada.com/listings/merchantid"
 	fullURL := fmt.Sprintf("%s/%s?offset=0&limit=50", baseURL, merchantID)
 
@@ -22,60 +22,38 @@ func FetchHBProducts(client *resty.Client, merchantID string, secretKey string) 
 		Get(fullURL)
 
 	if err != nil {
-		return nil, fmt.Errorf("HB API bağlantı hatası: %v", err)
+		return nil, err
 	}
 
-	if resp.IsError() {
-		return nil, fmt.Errorf("HB API hata döndürdü: %s - %s", resp.Status(), resp.String())
-	}
-
-	// HATA BURADAYDI: API doğrudan liste değil, nesne döndürüyor.
-	// Döküman bazen yanıltıcı olabilir, bu yüzden 'listings' veya 'data' anahtarını kontrol ediyoruz.
 	var result struct {
 		Listings []struct {
 			MerchantSku    string  `json:"merchantSku"`
 			Barcode        string  `json:"barcode"`
 			Price          float64 `json:"price"`
 			AvailableStock int     `json:"availableStock"`
-		} `json:"listings"` // Eğer 'listings' değilse aşağıda 'data' veya ham array kontrolü yapacağız
+			ProductId      string  `json:"productId"` // Dökümanda gizli ama dönme ihtimali yüksek olan alan
+		} `json:"listings"`
 	}
 
-	// Eğer 'listings' içinde değilse, veriyi bir map olarak çekip içini kontrol edelim
-	var rawResponse map[string]interface{}
-	json.Unmarshal(resp.Body(), &rawResponse)
-
-	// JSON yapısını çözme denemesi
-	if err := json.Unmarshal(resp.Body(), &result); err != nil || len(result.Listings) == 0 {
-		// Bazı versiyonlarda doğrudan array dönebiliyor,
-		// eğer 'listings' boşsa veya hata aldıysak eski yöntemi (array) tekrar deneyelim
-		var items []struct {
-			MerchantSku    string  `json:"merchantSku"`
-			Barcode        string  `json:"barcode"`
-			Price          float64 `json:"price"`
-			AvailableStock int     `json:"availableStock"`
-		}
-		if errArray := json.Unmarshal(resp.Body(), &items); errArray == nil {
-			for _, item := range items {
-				allProducts = append(allProducts, core.HBProduct{
-					SKU:     item.MerchantSku,
-					Barcode: item.Barcode,
-					Price:   item.Price,
-					Stock:   item.AvailableStock,
-				})
-			}
-			return allProducts, nil
-		}
-		return nil, fmt.Errorf("HB verisi beklenen formatta değil. Yanıt: %s", resp.String())
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, err
 	}
 
 	for _, item := range result.Listings {
+		// Eğer productId dönüyorsa senin verdiğin link yapısını simüle edelim.
+		// Not: l/45/150 kısmı kategoriye göre değişebilir ama genel yapı budur.
+		imgURL := ""
+		if item.ProductId != "" {
+			imgURL = fmt.Sprintf("https://productimages.hepsiburada.net/s/%s/1500/%s.jpg", item.ProductId, item.ProductId)
+		}
+
 		allProducts = append(allProducts, core.HBProduct{
-			SKU:     item.MerchantSku,
-			Barcode: item.Barcode,
-			Price:   item.Price,
-			Stock:   item.AvailableStock,
+			SKU:      item.MerchantSku,
+			Barcode:  item.Barcode,
+			Price:    item.Price,
+			Stock:    item.AvailableStock,
+			ImageURL: imgURL,
 		})
 	}
-
 	return allProducts, nil
 }

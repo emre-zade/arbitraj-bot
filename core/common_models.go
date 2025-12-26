@@ -96,10 +96,11 @@ type PttLoginResponse struct {
 
 // HBProduct: Hepsiburada API'sinden gelen canlı veriler için
 type HBProduct struct {
-	SKU     string
-	Barcode string
-	Price   float64
-	Stock   int
+	SKU      string
+	Barcode  string
+	Price    float64
+	Stock    int
+	ImageURL string
 }
 
 // MasterProduct: Excel'den yükleyeceğimiz temiz veriler için

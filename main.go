@@ -197,31 +197,29 @@ func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.
 }
 
 func runHbFetchOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	fmt.Println("\n[*] Hepsiburada (SIT) verileri dökümana göre çekiliyor...")
-
+	fmt.Println("\n[*] Hepsiburada (SIT) verileri çekiliyor...")
 	hbProducts, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
 	if err != nil {
 		fmt.Printf("[-] Hepsiburada Hatası: %v\n", err)
 		return
 	}
 
-	if len(hbProducts) == 0 {
-		fmt.Println("[!] Ürün bulunamadı. Lütfen SIT panelinden ürünlerin yüklü olduğunu teyit edin.")
-		return
+	fmt.Printf("[+] %d adet ürün bulundu.\n", len(hbProducts))
+	fmt.Print("Ürünleri veritabanına kaydedip Excel çıktısı alalım mı? (y/n): ")
+	onay, _ := reader.ReadString('\n')
+
+	if strings.TrimSpace(strings.ToLower(onay)) == "y" {
+		for _, hb := range hbProducts {
+			database.SaveHbProduct(hb.SKU, hb.Barcode, hb.Stock, hb.Price, hb.ImageURL)
+		}
+
+		// Excel Kaydı
+		fileName := "hb_test_urunler.xlsx"
+		err := utils.ExportHBProductsToExcel(hbProducts, fileName)
+		if err != nil {
+			fmt.Printf("[-] Excel oluşturulamadı: %v\n", err)
+		} else {
+			fmt.Printf("[+] Başarılı! Veriler DB'ye yazıldı ve %s oluşturuldu.\n", fileName)
+		}
 	}
-
-	fmt.Printf("[+] %d adet ürün çekildi.\n", len(hbProducts))
-
-	for _, hb := range hbProducts {
-		fmt.Println("\n----------------------------------------")
-		fmt.Printf("SKU    : %s\n", hb.SKU)
-		fmt.Printf("BARKOD : %s\n", hb.Barcode)
-		fmt.Printf("FİYAT  : %.2f TL\n", hb.Price)
-		fmt.Printf("STOK   : %d\n", hb.Stock)
-
-		database.SaveHbProduct(hb.SKU, hb.Barcode, hb.Stock, hb.Price)
-		fmt.Println("[+] Kaydedildi.")
-
-	}
-	fmt.Println("\n[+] İşlem bitti.")
 }
