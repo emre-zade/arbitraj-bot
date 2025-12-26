@@ -48,16 +48,17 @@ type PazaramaProductResponse struct {
 	Success bool              `json:"success"`
 }
 
-// PttProduct: Hem XML'den veri çekerken hem REST API ile güncellerken kullanacağız
 type PttProduct struct {
-	UrunId      int64   `xml:"UrunId"` // REST API'nin beklediği product_id burası
-	Barkod      string  `xml:"Barkod"`
-	UrunAdi     string  `xml:"UrunAdi"`
-	MevcutStok  int     `xml:"Miktar"`
-	MevcutFiyat float64 `xml:"KDVsiz"`
-	KdvOrani    int     `xml:"KDVOran"`
-	Aktif       bool    `xml:"Aktif"`
-	ResimURL    string  `xml:"UrunResim"`
+	Barkod         string  // Genelde Satıcı Stok Kodu ile aynı tutulur veya Excel'e eklenir
+	StokKodu       string  // Excel A Sütunu (Satıcı Stok Kodu)
+	UrunAdi        string  // Excel B Sütunu
+	Fiyat          float64 // Excel C Sütunu
+	Stok           int     // Excel D Sütunu
+	HazirlikSuresi int     // Excel E Sütunu (Kargoya Veriliş Süresi)
+	Marka          string  // Excel F Sütunu
+	KategoriId     int     // Excel G Sütunu (En Alt Kategori ID'si buraya gelmeli)
+	Aciklama       string  // Excel J Sütunu (Ürün Açıklaması)
+	Gorsel1        string  // Excel K Sütunu (Görsel 1)
 }
 
 type PttStockPriceUpdate struct {

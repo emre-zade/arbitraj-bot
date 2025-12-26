@@ -116,3 +116,23 @@ func SaveHbProduct(sku, barcode, productName string, stock int, price float64) {
 		log.Printf("[-] DB Kayıt Hatası (SKU: %s): %v", sku, err)
 	}
 }
+
+func InitPttCategoryTable() {
+	query := `
+	CREATE TABLE IF NOT EXISTS ptt_categories (
+		category_id INTEGER PRIMARY KEY,
+		category_name TEXT NOT NULL
+	);`
+	_, err := DB.Exec(query)
+	if err != nil {
+		log.Printf("[-] PTT Kategori tablosu hatası: %v", err)
+	}
+}
+
+func SavePttCategory(id int, name string) {
+	query := `INSERT OR REPLACE INTO ptt_categories (category_id, category_name) VALUES (?, ?)`
+	_, err := DB.Exec(query, id, name)
+	if err != nil {
+		log.Printf("[-] Kategori kaydedilemedi (%d): %v", id, err)
+	}
+}

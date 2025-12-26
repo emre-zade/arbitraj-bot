@@ -14,6 +14,21 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
+// PttCategoryResponse: XML Parçalama yapısı (Boşluklar kaldırıldı)
+type PttCategoryResponse struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		GetKategoriListesiResponse struct {
+			GetKategoriListesiResult struct {
+				KategoriBilgileri []struct { // Boşluk silindi, bitişik yapıldı
+					KategoriId  int    `xml:"KategoriId"`
+					KategoriAdi string `xml:"KategoriAdi"`
+				} `xml:"KategoriBilgileri"`
+			} `xml:"GetKategoriListesiResult"`
+		} `xml:"GetKategoriListesiResponse"`
+	} `xml:"Body"`
+}
+
 func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProduct {
 	var allProducts []core.PttProduct
 	page := 0
@@ -259,4 +274,97 @@ func formatPhotos(rawPhotos interface{}) []map[string]interface{} {
 		}
 	}
 	return formatted
+}
+
+// FetchAndSyncPttCategories: PTT'deki tüm kategorileri çeker ve DB'ye yazar
+func FetchAndSyncPttCategories(client *resty.Client, username, password string) error {
+	url := "https://ws.epttavm.com:83/service.svc"
+
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://tempuri.org/">
+	   <soapenv:Header/>
+	   <soapenv:Body>
+	      <ser:GetKategoriListesi>
+	         <ser:kullaniciAdi>%s</ser:kullaniciAdi>
+	         <ser:sifre>%s</ser:sifre>
+	      </ser:GetKategoriListesi>
+	   </soapenv:Body>
+	</soapenv:Envelope>`, username, password)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetKategoriListesi").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		return err
+	}
+	if resp.IsError() {
+		return fmt.Errorf("PTT API Hatası (%d)", resp.StatusCode())
+	}
+
+	var categoryData PttCategoryResponse
+	if err := xml.Unmarshal(resp.Body(), &categoryData); err != nil {
+		return fmt.Errorf("XML Parse Hatası: %v", err)
+	}
+
+	cats := categoryData.Body.GetKategoriListesiResponse.GetKategoriListesiResult.KategoriBilgileri
+	for _, c := range cats {
+		database.SavePttCategory(c.KategoriId, c.KategoriAdi)
+	}
+
+	fmt.Printf("[+] %d PTT kategorisi veritabanına işlendi.\n", len(cats))
+	return nil
+}
+
+func UploadProductToPtt(client *resty.Client, username, password string, product core.PttProduct) error {
+	url := "https://ws.epttavm.com:83/service.svc"
+
+	// PTT SOAP XML yapısı (CDATA ile HTML karakterlerini koruyoruz)
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://tempuri.org/">
+	   <soapenv:Body>
+	      <ser:UrunKaydet>
+	         <ser:kullaniciAdi>%s</ser:kullaniciAdi>
+	         <ser:sifre>%s</ser:sifre>
+	         <ser:urunListesi>
+	            <ser:UrunDetay>
+	               <ser:Barkod>%s</ser:Barkod>
+	               <ser:UrunAdi>%s</ser:UrunAdi>
+	               <ser:Marka>%s</ser:Marka>
+	               <ser:KategoriId>%d</ser:KategoriId>
+	               <ser:StokMiktari>%d</ser:StokMiktari>
+	               <ser:Fiyat>%.2f</ser:Fiyat>
+	               <ser:KdvOrani>20</ser:KdvOrani>
+	               <ser:Desi>1</ser:Desi>
+	               <ser:HazirlikSuresi>%d</ser:HazirlikSuresi>
+	               <ser:Durum>1</ser:Durum>
+	               <ser:Aciklama><![CDATA[%s]]></ser:Aciklama>
+	               <ser:UrunResim>%s</ser:UrunResim>
+	            </ser:UrunDetay>
+	         </ser:urunListesi>
+	      </ser:UrunKaydet>
+	   </soapenv:Body>
+	</soapenv:Envelope>`,
+		username, password,
+		product.StokKodu, product.UrunAdi, product.Marka,
+		product.KategoriId, product.Stok, product.Fiyat,
+		product.HazirlikSuresi, product.Aciklama, product.Gorsel1)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/UrunKaydet").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		return err
+	}
+
+	if resp.IsError() {
+		return fmt.Errorf("PTT Yükleme Hatası (%d): %s", resp.StatusCode(), resp.String())
+	}
+
+	return nil
 }

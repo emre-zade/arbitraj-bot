@@ -49,7 +49,7 @@ func main() {
 		case "2":
 			runPttOperation(client, &cfg, reader)
 		case "3":
-			runHbSitSeedOperation(client, &cfg, reader)
+			runPttExcelUploadOperation(client, &cfg)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -59,49 +59,111 @@ func main() {
 	}
 }
 
-func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+func runPttExcelUploadOperation(client *resty.Client, cfg *core.Config) {
+	fmt.Println("\n[*] storage/ptt_test.xlsx okunuyor...")
 
-	fmt.Println("\n[1/3] Ürünler çekiliyor...")
-	pttList := services.FetchAllPttProducts(client, cfg)
+	f, err := excelize.OpenFile("storage/ptt_test.xlsx")
+	if err != nil {
+		fmt.Printf("[-] Dosya bulunamadı: %v\n", err)
+		return
+	}
+	defer f.Close()
 
-	if len(pttList) == 0 {
-		fmt.Println("[-] Ürün bulunamadı.")
+	rows, err := f.GetRows(f.GetSheetList()[0])
+	if err != nil {
 		return
 	}
 
-	// --- VERİTABANINA KAYDETME BÖLÜMÜ ---
-	fmt.Printf("[+] %d ürün veritabanına işleniyor...\n", len(pttList))
+	for i, row := range rows {
+		if i == 0 {
+			continue
+		} // Başlıkları geç
+		if len(row) < 11 {
+			continue
+		} // K sütununa (Görsel 1) kadar veri olmalı
+
+		// Sayısal dönüşümler
+		fiyat, _ := strconv.ParseFloat(strings.ReplaceAll(row[2], ",", "."), 64)
+		stok, _ := strconv.Atoi(row[3])
+		hazirlikSuresi, _ := strconv.Atoi(row[4])
+		kategoriID, _ := strconv.Atoi(row[6]) // G Sütunu: En Alt Kategori (ID olmalı)
+
+		product := core.PttProduct{
+			StokKodu:       row[0],         // A: Satıcı Stok Kodu
+			UrunAdi:        row[1],         // B: Ürün Adı
+			Fiyat:          fiyat,          // C: Fiyat
+			Stok:           stok,           // D: Stok
+			HazirlikSuresi: hazirlikSuresi, // E: Kargo Süresi
+			Marka:          row[5],         // F: Marka
+			KategoriId:     kategoriID,     // G: Kategori ID
+			Aciklama:       row[9],         // J: Ürün Açıklaması
+			Gorsel1:        row[10],        // K: Görsel 1
+		}
+
+		fmt.Printf("[%d/%d] PTT'ye gönderiliyor: %s\n", i, len(rows)-1, product.UrunAdi)
+
+		err := services.UploadProductToPtt(client, cfg.Ptt.Username, cfg.Ptt.Password, product)
+		if err != nil {
+			fmt.Printf(" [!] Hata: %v\n", err)
+		} else {
+			fmt.Println(" [+] Başarılı.")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	fmt.Println("\n[1/3] PTT Ürünleri API'den çekiliyor...")
+	pttList := services.FetchAllPttProducts(client, cfg)
+
+	if len(pttList) == 0 {
+		fmt.Println("[-] Mağazada güncellenecek ürün bulunamadı.")
+		return
+	}
+
+	// --- VERİTABANI SENKRONİZASYONU ---
+	fmt.Printf("[+] %d ürün yerel veritabanına işleniyor...\n", len(pttList))
 	for _, p := range pttList {
-		// 1. Barkodu temizle ve normalize et
 		cleanBarcode := utils.CleanPttBarcode(p.Barkod)
 
 		localImagePath := ""
 		if p.ResimURL != "" {
+			// Resim indirme hatasını logla ama akışı bozma
 			path, err := utils.DownloadImage(p.ResimURL, p.Barkod)
 			if err == nil {
 				localImagePath = path
 			}
 		}
-		// KDV Dahil Fiyat Hesaplama (Örn: 100 * 1.20 = 120)
+
+		// KDV Dahil Fiyat (PTT genelde KDV'siz ister ama DB'de son fiyatı tutalım)
 		kdvDahilFiyat := p.MevcutFiyat * (1 + float64(p.KdvOrani)/100.0)
 		database.SavePttProduct(cleanBarcode, p.UrunAdi, p.MevcutStok, kdvDahilFiyat, p.Barkod, localImagePath)
 	}
-	fmt.Println("[+] Veritabanı güncellendi.")
+	fmt.Println("[+] Veritabanı ve resimler güncellendi.")
 
+	// Analiz Excel'ini Oluştur
 	path := utils.SavePttToExcel(pttList)
-
-	fmt.Printf("\nExcel Hazır: %s\nKAYDET ve KAPATIP ENTER'a bas...\n", path)
+	fmt.Printf("\nAnaliz Excel'i Hazır: %s\nLütfen fiyat/stok değişikliklerini yapın, dosyayı KAYDEDİN ve ENTER'a basın...", path)
 	reader.ReadString('\n')
 
-	fmt.Println("[2/3] Excel analiz ediliyor...")
-	rows, _ := utils.GetPttExcelRows()
+	// --- EXCEL ANALİZ VE GÜNCELLEME ---
+	fmt.Println("[2/3] Excel verileri analiz ediliyor...")
+	rows, err := utils.GetPttExcelRows()
+	if err != nil {
+		fmt.Printf("[-] Excel okuma hatası: %v\n", err)
+		return
+	}
+
 	var updates []core.PttStockPriceUpdate
 
 	for i, row := range rows {
+		// Başlık satırını geç ve en az 8 sütun olduğundan emin ol (0'dan 7'ye)
 		if i == 0 || len(row) < 8 {
 			continue
 		}
 
+		// Excel sütun eşleşmeleri (Analiz Excel'i yapısına göre)
+		// [0:Ad, 1:Barkod, 2:MevcutStok, 3:KDV, 4:SatisFiyati, 5:İşlem, 6:YeniStok, 7:ProductID]
 		productName := row[0]
 		barcode := row[1]
 		curStkStr := row[2]
@@ -111,6 +173,11 @@ func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reade
 		newStkStr := strings.TrimSpace(row[6])
 		productID := row[7]
 
+		// Güvenli Sayısal Dönüşümler
+		curSatis, _ := strconv.ParseFloat(curSatisStr, 64)
+		kdv, _ := strconv.Atoi(curKdvStr)
+		curStk, _ := strconv.Atoi(curStkStr)
+
 		isPriceChanged := op != ""
 		isStockChanged := newStkStr != "" && newStkStr != curStkStr
 
@@ -118,31 +185,30 @@ func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reade
 			continue
 		}
 
-		// Sayısal dönüşümler
-		curSatis, _ := strconv.ParseFloat(curSatisStr, 64)
-		kdv, _ := strconv.Atoi(curKdvStr)
-		curStk, _ := strconv.Atoi(curStkStr)
-
-		newSatis := core.CalculateNewPrice(curSatis, op)
-		newKdvsiz := newSatis / (1 + float64(kdv)/100)
-		stk := curStk
-		if newStkStr != "" {
-			stk, _ = strconv.Atoi(newStkStr)
+		// Yeni Değerleri Hesapla
+		newSatis := curSatis
+		if isPriceChanged {
+			newSatis = core.CalculateNewPrice(curSatis, op)
 		}
 
-		// --- SENİN İSTEDİĞİN SABİT RAPORLAMA ---
-		fmt.Printf("[+] DEĞİŞİKLİK SAPTANDI: %s (%s)\n", barcode, productName)
+		// PTT REST API KDV'siz fiyat bekler
+		newKdvsiz := newSatis / (1 + float64(kdv)/100)
+
+		stk := curStk
+		if newStkStr != "" {
+			if s, err := strconv.Atoi(newStkStr); err == nil {
+				stk = s
+			}
+		}
+
+		// Raporlama
+		fmt.Printf("[!] DEĞİŞİKLİK: %s (%s)\n", barcode, productName)
 		if isPriceChanged {
-			fmt.Printf("    Fiyat: %.2f TL -> %.2f TL\n", curSatis, newSatis)
-		} else {
-			fmt.Printf("    Fiyat: Değişiklik yok (%.2f TL)\n", curSatis)
+			fmt.Printf("    Fiyat: %.2f -> %.2f\n", curSatis, newSatis)
 		}
 		if isStockChanged {
 			fmt.Printf("    Stok : %d -> %d\n", curStk, stk)
-		} else {
-			fmt.Printf("    Stok : Değişiklik yok (%d)\n", curStk)
 		}
-		fmt.Println("    -------------------------------------------")
 
 		updates = append(updates, core.PttStockPriceUpdate{
 			ProductID: productID,
@@ -152,18 +218,26 @@ func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reade
 		})
 	}
 
-	if len(updates) > 0 && core.AskConfirmation("PTT ürünleri güncellensin mi?") {
-		for _, up := range updates {
-			// Unutma: UpdatePttStockPriceRest içinde hem resim iniyor hem de başarılıysa DB güncelleniyor
-			res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
-			if err != nil {
-				fmt.Printf("[-] %s Güncelleme Hatası: %v\n", up.Barcode, err)
-			} else {
-				fmt.Printf("[+] %s Başarıyla Güncellendi: %s\n", up.Barcode, res)
+	// --- API GÜNCELLEME ---
+	if len(updates) > 0 {
+		msg := fmt.Sprintf("%d ürün PTT üzerinde güncellenecek. Onaylıyor musun?", len(updates))
+		if core.AskConfirmation(msg) {
+			fmt.Println("[3/3] PTT API güncellemeleri gönderiliyor...")
+			for _, up := range updates {
+				// REST API üzerinden tekil güncelleme
+				res, err := services.UpdatePttStockPriceRest(client, cfg, up.ProductID, up.Stock, up.Price)
+				if err != nil {
+					fmt.Printf(" [-] %s (%s) Hatası: %v\n", up.Barcode, up.ProductID, err)
+				} else {
+					fmt.Printf(" [+] %s Güncellendi: %s\n", up.Barcode, res)
+					// Başarılıysa DB'yi de güncelle (Opsiyonel)
+					database.UpdatePttStockPriceInDB(up.Barcode, up.Stock, up.Price*(1.20))
+				}
+				time.Sleep(200 * time.Millisecond)
 			}
-
-			time.Sleep(250 * time.Millisecond)
 		}
+	} else {
+		fmt.Println("[+] Yapılacak bir değişiklik bulunmadı.")
 	}
 }
 
