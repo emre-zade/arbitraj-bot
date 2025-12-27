@@ -37,6 +37,7 @@ func main() {
 		fmt.Println("1- Pazarama Operasyonu")
 		fmt.Println("2- PttAVM Operasyonu")
 		fmt.Println("3- HB Operasyonu")
+		fmt.Println("4- PTT Takip Sorgula (Tracking ID)")
 		fmt.Println("9- PttAVM Katalog Listesini Al")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
@@ -52,6 +53,18 @@ func main() {
 			runPttExcelUploadOperation(client, &cfg)
 		case "3":
 			runHbSitSeedOperation(client, &cfg, reader)
+		case "4":
+			var tid string
+			fmt.Print("\n[?] Sorgulanacak PTT Tracking ID girin: ")
+			fmt.Scanln(&tid)
+
+			if tid == "" {
+				fmt.Println("[-] Hata: Boş bir ID girdiniz.")
+				continue
+			}
+
+			fmt.Printf("[*] %s ID'li paket PTT'den sorgulanıyor...\n", tid)
+			services.GetPttTrackingStatus(client, cfg.Ptt.Username, cfg.Ptt.Password, tid)
 		case "9":
 			services.ListAllPttCategories(client, cfg.Ptt.Username, cfg.Ptt.Password)
 		case "0":
@@ -64,77 +77,87 @@ func main() {
 }
 
 func runPttExcelUploadOperation(client *resty.Client, cfg *core.Config) {
-	fmt.Println("\n[*] storage/ptt_test.xlsx okunuyor...")
+	filePath := "storage/ptt_urun_yukleme.xlsx"
+	fmt.Printf("[*] %s okunuyor...\n", filePath)
 
-	f, err := excelize.OpenFile("storage/ptt_test.xlsx")
+	// Excel dosyasını aç
+	f, err := excelize.OpenFile(filePath)
 	if err != nil {
-		fmt.Printf("[-] Dosya bulunamadı: %v\n", err)
+		fmt.Printf("[-] Excel açma hatası: %v\n", err)
 		return
 	}
 	defer f.Close()
 
-	// İlk sayfayı al
-	rows, err := f.GetRows(f.GetSheetList()[0])
-	if err != nil {
-		fmt.Printf("[-] Satırlar okunamadı: %v\n", err)
+	// Excel dosyasındaki tüm sayfaların listesini al
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		fmt.Println("[-] Excel dosyasında hiç sayfa bulunamadı.")
 		return
 	}
+
+	// İlk sayfanın adını otomatik al (Sheet1 mi Sayfa1 mi diye bakmaz, ilkini seçer)
+	activeSheet := sheets[0]
+	fmt.Printf("[*] '%s' sayfası okunuyor...\n", activeSheet)
+
+	rows, err := f.GetRows(activeSheet)
+	if err != nil {
+		fmt.Printf("[-] Satır okuma hatası: %v\n", err)
+		return
+	}
+
+	// 1. ADIM: Tüm ürünleri toplayacağımız bir slice oluşturuyoruz
+	var allProducts []core.PttProduct
+
+	fmt.Println("[*] Veriler işleniyor ve listeye ekleniyor...")
 
 	for i, row := range rows {
 		if i == 0 {
 			continue
 		} // Başlık satırını atla
-		if len(row) < 11 {
+		if len(row) < 5 {
 			continue
-		} // K sütununa kadar dolu olduğundan emin ol
+		} // Eksik satırları atla
 
-		// SAYISAL DÖNÜŞÜMLER
-		fiyat, _ := strconv.ParseFloat(strings.ReplaceAll(row[2], ",", "."), 64)
-		stok, _ := strconv.Atoi(row[3])
-		hazirlikSuresi, _ := strconv.Atoi(row[4])
-		kategoriID, _ := strconv.Atoi(row[6]) // G Sütunu: Kategori ID
-
-		// DÜZELTME: row[7] (H Sütunu) string olduğu için int'e çeviriyoruz
-		kdvOrani, _ := strconv.Atoi(row[7])
-		if kdvOrani == 0 {
-			kdvOrani = 1
-		} // Eğer boşsa varsayılan 1 yap
-
+		// Çoklu resim toplama mantığı (K-R sütunları arası)
 		var gorseller []string
-		// 10. indeksten (K) başlayıp 17. indekse (R) kadar kontrol et
 		for colIdx := 10; colIdx <= 17; colIdx++ {
 			if len(row) > colIdx && row[colIdx] != "" {
 				gorseller = append(gorseller, row[colIdx])
 			}
 		}
 
+		// Ürün objesini oluştur
 		product := core.PttProduct{
-			StokKodu:       row[0],         // A: Satıcı Stok Kodu
-			UrunAdi:        row[1],         // B: Ürün Adı
-			Fiyat:          fiyat,          // C: Fiyat
-			Stok:           stok,           // D: Stok
-			HazirlikSuresi: hazirlikSuresi, // E: Kargo Süresi
-			Marka:          row[5],         // F: Marka
-			KategoriId:     kategoriID,     // G: Kategori ID
-			KdvOrani:       kdvOrani,       // H: KDV Oranı (Sayıya çevrildi)
-			Aciklama:       row[9],         // J: Ürün Açıklaması
-			Gorseller:      gorseller,      // K: başlayıp 17. indekse R: kadar
+			StokKodu:       row[0],                      // A: Satıcı Stok Kodu
+			UrunAdi:        row[1],                      // B: Ürün Adı
+			Fiyat:          utils.StringToFloat(row[2]), // C: Fiyat
+			Stok:           utils.StringToInt(row[3]),   // D: Stok
+			HazirlikSuresi: utils.StringToInt(row[4]),   // E: Hazırlık Süresi
+			Marka:          row[5],                      // F: Marka
+			KategoriId:     utils.StringToInt(row[6]),   // G: Kategori ID
+			KdvOrani:       utils.StringToInt(row[7]),   // H: KDV Oranı
+			Aciklama:       row[9],                      // J: Açıklama
+			Gorseller:      gorseller,                   // K-R: Görseller
 		}
 
-		fmt.Printf("[%d/%d] PTT'ye gönderiliyor: %s (%s)\n", i, len(rows)-1, product.UrunAdi, product.StokKodu)
+		// 2. ADIM: Ürünü PTT'ye hemen göndermek yerine listeye ekle
+		allProducts = append(allProducts, product)
 
-		// PTT'ye yükle (Gereksiz MevcutStok/MevcutFiyat alanları gitmez, sadece product içindeki dolu alanlar kullanılır)
-		err := services.UploadProductToPtt(client, cfg.Ptt.Username, cfg.Ptt.Password, product)
-		if err != nil {
-			fmt.Printf(" [!] Hata: %v\n", err)
-		} else {
-			fmt.Println(" [+] Başarılı (Sıraya Alındı).")
+		// Log tutma sevgin için süreci gösterelim
+		if i%100 == 0 {
+			fmt.Printf("[+] %d ürün işlendi...\n", i)
 		}
-
-		// PTT sunucusunu yormamak için kısa bekleme
-		time.Sleep(1 * time.Second)
 	}
-	fmt.Println("\n[+] Excel yükleme işlemi tamamlandı.")
+
+	// 3. ADIM: Toplanan tüm ürünleri (Örn: 1350 ürün) PTT Bulk fonksiyonuna gönder
+	if len(allProducts) > 0 {
+		fmt.Printf("[OK] Toplam %d ürün hazırlandı. PTT'ye toplu gönderim başlıyor...\n", len(allProducts))
+		services.BulkUploadToPtt(client, cfg.Ptt.Username, cfg.Ptt.Password, allProducts)
+	} else {
+		fmt.Println("[!] Gönderilecek geçerli ürün bulunamadı.")
+	}
+
+	fmt.Println("[+] Excel yükleme işlemi tamamlandı.")
 }
 
 func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {

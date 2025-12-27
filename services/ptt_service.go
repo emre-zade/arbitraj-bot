@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -70,54 +71,6 @@ func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProdu
 	}
 	return allProducts
 }
-
-/*
-func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProduct {
-	var allProducts []core.PttProduct
-	// Test için sadece 0. sayfayı (ilk 100 ürünün olduğu sayfa) hedefliyoruz
-	page := 0
-
-	url := "https://ws.pttavm.com:93/service.svc"
-	payload := fmt.Sprintf(`
-	<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
-	   <s:Header>
-		  <o:Security s:mustUnderstand="1" xmlns:o="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-			 <o:UsernameToken><o:Username>%s</o:Username><o:Password>%s</o:Password></o:UsernameToken>
-		  </o:Security>
-	   </s:Header>
-	   <s:Body>
-		  <tem:StokKontrolListesi><tem:SearchAktifPasif>0</tem:SearchAktifPasif><tem:SearchPage>%d</tem:SearchPage></tem:StokKontrolListesi>
-	   </s:Body>
-	</s:Envelope>`, cfg.Ptt.Username, cfg.Ptt.Password, page)
-
-	resp, err := client.R().
-		SetHeader("Content-Type", "text/xml; charset=utf-8").
-		SetHeader("SOAPAction", "http://tempuri.org/IService/StokKontrolListesi").
-		SetBody([]byte(payload)).Post(url)
-
-	if err != nil || resp.StatusCode() != 200 {
-		return allProducts
-	}
-
-	var result core.PttListResponse
-	xml.Unmarshal(resp.Body(), &result)
-
-	if len(result.Products) > 0 {
-		fmt.Printf("[DEBUG] İlk Ürün XML Verisi: %+v\n", result.Products[0])
-	}
-
-	// API'den gelen listeden sadece ilk 10 tanesini alıyoruz
-	if len(result.Products) > 10 {
-		allProducts = result.Products[:10]
-	} else {
-		allProducts = result.Products
-	}
-
-	fmt.Printf("[i] Sayfa %d çekildi. (Toplam: %d ürün)\n", page, len(allProducts))
-
-	return allProducts
-}
-*/
 
 func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID string, stock int, price float64) (string, error) {
 	getURL := fmt.Sprintf("https://tedarik-api.pttavm.com/product/detail/%s", productID)
@@ -768,4 +721,194 @@ func extractFlexibleTag(data, tag string) string {
 		return ""
 	}
 	return data[startIndex : startIndex+endIndex]
+}
+
+// BulkUploadToPtt: Ürünleri 1000'erli paketler halinde PTT'ye gönderir.
+func BulkUploadToPtt(client *resty.Client, username, password string, allProducts []core.PttProduct) {
+	const batchSize = 1000
+	totalProducts := len(allProducts)
+
+	fmt.Printf("[*] Toplam %d ürün için gönderim süreci başlıyor (Paket boyutu: %d)...\n", totalProducts, batchSize)
+
+	for i := 0; i < totalProducts; i += batchSize {
+		// Paketin son endeksini hesapla (Taşmaları önlemek için)
+		end := i + batchSize
+		if end > totalProducts {
+			end = totalProducts
+		}
+
+		// Mevcut paketi al (Örn: 0-1000, sonra 1000-1350)
+		currentBatch := allProducts[i:end]
+
+		fmt.Printf("\n[>] Paket Gönderiliyor: %d - %d arası ürünler...\n", i+1, end)
+
+		// Bu paketi PTT'ye gönderen fonksiyonu çağır
+		err := uploadBatchToPtt(client, username, password, currentBatch)
+
+		if err != nil {
+			fmt.Printf(" [!] Paket hatası (%d-%d): %v\n", i+1, end, err)
+			// Hata durumunda log tutma sevgin için detay kaydediyoruz
+			if utils.InfoLogger != nil {
+				utils.InfoLogger.Printf("HATA: %d-%d arası paket gönderilemedi. Hata: %v", i+1, end, err)
+			}
+		} else {
+			fmt.Printf(" [+] Paket başarıyla sıraya alındı (%d-%d).\n", i+1, end)
+		}
+
+		// Dökümanda "Aynı talep 5 dakika içinde tekrar gönderilemez" diyor.
+		// Paketler farklı olsa da PTT sunucusunu yormamak için kısa bir es verelim.
+		if end < totalProducts {
+			fmt.Println("[*] Sonraki paket için 5 saniye bekleniyor...")
+			time.Sleep(5 * time.Second)
+		}
+	}
+}
+
+func uploadBatchToPtt(client *resty.Client, username, password string, products []core.PttProduct) error {
+	url := "https://ws.pttavm.com:93/service.svc"
+
+	var itemsXML strings.Builder
+	for _, p := range products {
+		// 1. Veri Hazırlığı
+		finalBarcode := p.Barkod
+		if finalBarcode == "" {
+			finalBarcode = p.StokKodu
+		}
+		kdvOrani := p.KdvOrani
+		if kdvOrani == 0 {
+			kdvOrani = 20
+		}
+		priceWithVat := p.Fiyat
+		priceWithoutVat := priceWithVat / (1 + float64(kdvOrani)/100.0)
+
+		// Karakter Temizliği
+		safeName := utils.SanitizeXML(p.UrunAdi)
+		safeBrand := utils.SanitizeXML(p.Marka)
+		safeDesc := utils.SanitizeXMLOnly(p.Aciklama)
+
+		// 2. Çoklu Resim Bloğu (Debug Loglu)
+		var imagesXML strings.Builder
+		for _, imgURL := range p.Gorseller {
+			if strings.TrimSpace(imgURL) != "" {
+				imagesXML.WriteString(fmt.Sprintf(`
+                  <ept:ProductImageV3>
+                     <ept:Url>%s</ept:Url>
+                  </ept:ProductImageV3>`, imgURL))
+			}
+		}
+
+		imgCount := strings.Count(imagesXML.String(), "<ept:ProductImageV3>")
+		fmt.Printf("[DEBUG] Barkod: %s | Gönderilen Resim Sayısı: %d\n", finalBarcode, imgCount)
+
+		// 3. XML Şablonu (Yorum satırını KALDIRDIK, sadece saf veri)
+		itemsXML.WriteString(fmt.Sprintf(`
+                <ept:ProductV3Request>
+                    <ept:Active>true</ept:Active>
+                    <ept:Barcode>%s</ept:Barcode>
+                    <ept:Brand>%s</ept:Brand>
+                    <ept:CategoryId>%d</ept:CategoryId>
+                    <ept:Desi>1</ept:Desi>
+                    <ept:Images>
+                        %s
+                    </ept:Images>
+                    <ept:LongDescription><![CDATA[%s]]></ept:LongDescription>
+                    <ept:Name>%s</ept:Name>
+                    <ept:PriceWithVat>%.2f</ept:PriceWithVat>
+                    <ept:PriceWithoutVat>%.2f</ept:PriceWithoutVat>
+                    <ept:Quantity>%d</ept:Quantity>
+                    <ept:VATRate>%d</ept:VATRate>
+                </ept:ProductV3Request>`,
+			finalBarcode, safeBrand, p.KategoriId, imagesXML.String(),
+			safeDesc, safeName, priceWithVat, priceWithoutVat, p.Stok, kdvOrani))
+	}
+
+	// TAM PAKETİ OLUŞTUR
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/" xmlns:ept="http://schemas.datacontract.org/2004/07/ePttAVMService.Model.Requests">
+	<soapenv:Header>
+		<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+			<wsse:UsernameToken>
+				<wsse:Username>%s</wsse:Username>
+				<wsse:Password>%s</wsse:Password>
+			</wsse:UsernameToken>
+		</wsse:Security>
+	</soapenv:Header>
+	<soapenv:Body>
+		<tem:UpdateProductsV3>
+			<tem:items>%s</tem:items>
+		</tem:UpdateProductsV3>
+	</soapenv:Body>
+	</soapenv:Envelope>`, username, password, itemsXML.String())
+
+	// --- LOGLAMA OPERASYONU ---
+	// 1. Dosyaya Kaydet (Her isteği ayrı gör)
+	logFile := fmt.Sprintf("storage/debug_ptt_request_%d.xml", time.Now().Unix())
+	_ = os.WriteFile(logFile, []byte(soapXML), 0644)
+	fmt.Printf("[LOG] Giden Paket Şuraya Kaydedildi: %s\n", logFile)
+
+	// 2. Konsola Yaz (Kısa özet)
+	if len(soapXML) > 500 {
+		fmt.Println("[DEBUG] XML İlk 500 Karakter:\n", soapXML[:500])
+	}
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/UpdateProductsV3").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		return err
+	}
+
+	// Yanıtı Logla
+	fmt.Printf("[RESPONSE] PTT Yanıtı: %s\n", resp.String())
+	return nil
+}
+
+// GetPttTrackingStatus: Gönderilen paketin onay durumunu sorgular.
+func GetPttTrackingStatus(client *resty.Client, username, password string, trackingId string) {
+	url := "https://ws.pttavm.com:93/service.svc"
+
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken>
+	            <wsse:Username>%s</wsse:Username>
+	            <wsse:Password>%s</wsse:Password>
+	         </wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
+	   <soapenv:Body>
+	      <tem:GetProductsTrackingResult>
+	         <tem:trackingId>%s</tem:trackingId>
+	      </tem:GetProductsTrackingResult>
+	   </soapenv:Body>
+	</soapenv:Envelope>`, username, password, trackingId)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetProductsTrackingResult").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		fmt.Printf("[-] Sorgulama hatası: %v\n", err)
+		return
+	}
+
+	raw := resp.String()
+
+	// Log tutma sevgine özel: Yanıtı detaylıca kaydedelim
+	if utils.InfoLogger != nil {
+		utils.InfoLogger.Printf("[PTT-TAKİP] ID: %s için sorgu yapıldı.\nYanıt: %s", trackingId, raw)
+	}
+
+	// PTT bazen "Hazırlanıyor" der, bazen hataları listeler.
+	if strings.Contains(raw, "Başarılı") || strings.Contains(raw, "Success") {
+		fmt.Printf("[+] Takip ID %s: Ürünler başarıyla onaylanmış görünüyor.\n", trackingId)
+	} else {
+		fmt.Printf("[!] Takip ID %s: İşlem devam ediyor veya hata raporu var. Logları incele.\n", trackingId)
+	}
 }
