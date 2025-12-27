@@ -19,8 +19,8 @@ func InitLogger() {
 	}
 
 	// Standart log çıktılarını özelleştir
-	InfoLogger = log.New(file, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-	ErrorLogger = log.New(file, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+	InfoLogger = log.New(file, "\nINFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLogger = log.New(file, "\nERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 }
 
 func LogJSON(v interface{}) {

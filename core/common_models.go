@@ -66,7 +66,7 @@ type PttProduct struct {
 	Marka          string
 	KategoriId     int
 	Aciklama       string
-	Gorsel1        string
+	Gorseller      []string
 }
 
 type PttStockPriceUpdate struct {

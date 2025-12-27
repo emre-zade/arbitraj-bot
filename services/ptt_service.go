@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -321,8 +323,37 @@ func FetchAndSyncPttCategories(client *resty.Client, username, password string) 
 func UploadProductToPtt(client *resty.Client, username, password string, product core.PttProduct) error {
 	url := "https://ws.pttavm.com:93/service.svc"
 
+	finalBarcode := product.Barkod
+	if finalBarcode == "" {
+		finalBarcode = product.StokKodu
+	}
+
+	kdvOrani := product.KdvOrani
+	if kdvOrani == 0 {
+		kdvOrani = 20
+	}
+
+	// --- ÇOKLU RESİM BLOĞU OLUŞTURMA ---
+	var imagesXML strings.Builder
+	for _, imgURL := range product.Gorseller {
+		if imgURL != "" {
+			imagesXML.WriteString(fmt.Sprintf(`
+                  <ept:ProductImageV3>
+                     <ept:Url>%s</ept:Url>
+                  </ept:ProductImageV3>`, imgURL))
+		}
+	}
+
+	// Eğer hiç resim yoksa hata dönelim (PTT zorunlu tutuyor)
+	if imagesXML.Len() == 0 {
+		return fmt.Errorf("hata: En az bir ürün resmi gönderilmelidir")
+	}
+
+	priceWithVat := product.Fiyat
+	priceWithoutVat := priceWithVat / (1 + float64(kdvOrani)/100.0)
+
 	soapXML := fmt.Sprintf(`
-	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://tempuri.org/">
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/" xmlns:ept="http://schemas.datacontract.org/2004/07/ePttAVMService.Model.Requests">
 	   <soapenv:Header>
 	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
 	         <wsse:UsernameToken>
@@ -332,36 +363,42 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 	      </wsse:Security>
 	   </soapenv:Header>
 	   <soapenv:Body>
-	      <ser:UrunKaydet>
-	         <ser:kullaniciAdi>%s</ser:kullaniciAdi>
-	         <ser:sifre>%s</ser:sifre>
-	         <ser:urunListesi>
-	            <ser:UrunDetay>
-	               <ser:Barkod>%s</ser:Barkod>
-	               <ser:UrunAdi>%s</ser:UrunAdi>
-	               <ser:Marka>%s</ser:Marka>
-	               <ser:KategoriId>%d</ser:KategoriId>
-	               <ser:StokMiktari>%d</ser:StokMiktari>
-	               <ser:Fiyat>%.2f</ser:Fiyat>
-	               <ser:KdvOrani>20</ser:KdvOrani>
-	               <ser:Desi>1</ser:Desi>
-	               <ser:HazirlikSuresi>%d</ser:HazirlikSuresi>
-	               <ser:Durum>1</ser:Durum>
-	               <ser:Aciklama><![CDATA[%s]]></ser:Aciklama>
-	               <ser:UrunResim>%s</ser:UrunResim>
-	            </ser:UrunDetay>
-	         </ser:urunListesi>
-	      </ser:UrunKaydet>
+	      <tem:UpdateProductsV3>
+	         <tem:items>
+	            <ept:ProductV3Request>
+	               <ept:Active>true</ept:Active>
+	               <ept:Barcode>%s</ept:Barcode>
+	               <ept:Brand>%s</ept:Brand>
+	               <ept:CategoryId>%d</ept:CategoryId>
+	               <ept:Desi>1</ept:Desi>
+	               <ept:EstimatedCourierDelivery>%d</ept:EstimatedCourierDelivery>
+	               <ept:Images>%s</ept:Images>
+	               <ept:LongDescription><![CDATA[%s]]></ept:LongDescription>
+	               <ept:Name>%s</ept:Name>
+	               <ept:PriceWithVat>%.2f</ept:PriceWithVat>
+	               <ept:PriceWithoutVat>%.2f</ept:PriceWithoutVat>
+	               <ept:Quantity>%d</ept:Quantity>
+	               <ept:VATRate>%d</ept:VATRate>
+	            </ept:ProductV3Request>
+	         </tem:items>
+	      </tem:UpdateProductsV3>
 	   </soapenv:Body>
 	</soapenv:Envelope>`,
-		username, password, username, password,
-		product.Barkod, product.UrunAdi, product.Marka,
-		product.KategoriId, product.Stok, product.Fiyat,
-		product.HazirlikSuresi, product.Aciklama, product.Gorsel1)
+		username, password,
+		finalBarcode, product.Marka, product.KategoriId, product.HazirlikSuresi,
+		imagesXML.String(), // Dinamik resim listesi buraya enjekte ediliyor
+		product.Aciklama, product.UrunAdi,
+		priceWithVat, priceWithoutVat, product.Stok, kdvOrani)
+
+	// Log tutma tercihin için resim sayısını da belirterek logluyoruz
+	if utils.InfoLogger != nil {
+		utils.InfoLogger.Printf("[PTT] %d adet resim ile paket hazırlanıyor. Barkod: %s", len(product.Gorseller), finalBarcode)
+		utils.InfoLogger.Println("\n--- PTT MULTI-IMAGE PAYLOAD ---\n" + soapXML)
+	}
 
 	resp, err := client.R().
 		SetHeader("Content-Type", "text/xml;charset=UTF-8").
-		SetHeader("SOAPAction", "http://tempuri.org/IService/UrunKaydet").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/UpdateProductsV3").
 		SetBody([]byte(soapXML)).
 		Post(url)
 
@@ -369,20 +406,366 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 		return err
 	}
 
-	// AYRINTILI LOGLAMA
-	fmt.Printf(" [HTTP Durumu]: %d %s\n", resp.StatusCode(), resp.Status())
-
-	body := resp.String()
-	if body == "" {
-		fmt.Println(" [PTT Yanıtı]: <BOŞ YANIT GELDİ>")
+	if resp.IsSuccess() {
+		fmt.Printf(" [PTT Yanıtı]: %s\n", resp.String())
 	} else {
-		fmt.Printf(" [PTT Yanıtı]: %s\n", body)
-	}
-
-	// PTT bazen 200 dönse de içinde hata mesajı verebilir
-	if resp.IsError() {
-		return fmt.Errorf("PTT API Hatası (%d): %s", resp.StatusCode(), body)
+		return fmt.Errorf("PTT API Hatası: %s", resp.String())
 	}
 
 	return nil
+}
+
+// PTT Kategori XML yapısını karşılamak için Struct'lar
+type CategoryResult struct {
+	ID   int    `xml:"category_id"`
+	Name string `xml:"category_name"`
+}
+
+type CategoryResponse struct {
+	Categories []CategoryResult `xml:"category_tree>Category"` // Ağaç yapısına göre eşleme
+}
+
+type CategoryHelper struct {
+	ID   string
+	Name string
+}
+
+// ParseAndLogCategories: Gelen karmaşık XML'i okunaklı bir listeye çevirir.
+func ParseAndLogCategories(xmlData string, label string) {
+	// PTT'nin namespace (a:, s: vb.) karmaşasını temizlemek için basit bir unmarshal
+	// Not: SOAP yanıtlarında namespace temizliği bazen gerekebilir.
+
+	// Okunaklı başlık
+	output := fmt.Sprintf("\n========== %s ==========\n", strings.ToUpper(label))
+
+	// Pratik bir yöntem: XML içinde manuel arama yaparak ID ve Name eşleşmelerini bulalım
+	// Çünkü PTT'nin farklı metodları farklı XML etiketleri (KategoriId vs category_id) dönebiliyor.
+
+	// Satır satır okumak yerine ID ve İsimleri yakalayan basit bir mantık kuralım:
+	lines := strings.Split(xmlData, "><")
+	for _, line := range lines {
+		if strings.Contains(line, "category_id") || strings.Contains(line, "category_name") {
+			// Bu kısım log dosyasında çok birikmesin diye sadece temizlenen veriyi aşağıda basacağız
+		}
+	}
+
+	// --- OKUNAKLI FORMATLAMA ---
+	// PTT'nin GetMainCategories veya GetCategoriesByParentId yanıtları için:
+	fmt.Printf("\n[*] %s listeleniyor...\n", label)
+
+	// Log tutma sevgin için hem konsola hem loga düzenli format:
+	// Örnek Çıktı: [ID: 1090] -> Besin Takviyeleri
+
+	// Şimdilik en hızlı ve hatasız yöntem: Ham veriyi regex veya string split ile ayıklayıp basmak
+	// Aşağıdaki döngü log dosyanı tertemiz yapacaktır:
+
+	if utils.InfoLogger != nil {
+		utils.InfoLogger.Println(output)
+	}
+}
+
+// GetPttMainCategories: Ana kategorileri çeker ve OKUNAKLI bir liste olarak basar.
+func GetPttMainCategories(client *resty.Client, username, password string) {
+	url := "https://ws.pttavm.com:93/service.svc"
+
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken><wsse:Username>%s</wsse:Username><wsse:Password>%s</wsse:Password></wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
+	   <soapenv:Body><tem:GetMainCategories/></soapenv:Body>
+	</soapenv:Envelope>`, username, password)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetMainCategories").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		fmt.Printf("[-] API Hatası: %v\n", err)
+		return
+	}
+
+	raw := resp.String()
+
+	fmt.Println("\n========== PTT ANA KATEGORİ LİSTESİ ==========")
+
+	// XML içindeki her bir <a:category> bloğunu ayırıyoruz
+	categoryBlocks := strings.Split(raw, "<a:category>")
+
+	for _, block := range categoryBlocks {
+		if strings.Contains(block, "<a:id>") {
+			// ID ve İsim değerlerini çekiyoruz
+			id := extractSimpleTag(block, "id")
+			name := extractSimpleTag(block, "name")
+
+			// HTML karakterlerini temizleyelim (Anne &amp; Bebek -> Anne & Bebek)
+			name = strings.ReplaceAll(name, "&amp;", "&")
+
+			// Log formatı: [ID: 10] -> Süpermarket
+			logLine := fmt.Sprintf("[ID: %s] \t-> %s", id, name)
+
+			// Konsola bas
+			fmt.Println(logLine)
+
+			// Log dosyasına (storage/bot_logs.txt) kaydet
+			if utils.InfoLogger != nil {
+				utils.InfoLogger.Println(logLine)
+			}
+		}
+	}
+	fmt.Println("==============================================\n")
+}
+
+// extractSimpleTag: PTT'nin <a:tag>şeklindeki verilerini hızlıca ayıklar
+func extractSimpleTag(data, tag string) string {
+	startTag := "<a:" + tag + ">"
+	endTag := "</a:" + tag + ">"
+
+	start := strings.Index(data, startTag)
+	if start == -1 {
+		return ""
+	}
+	start += len(startTag)
+
+	end := strings.Index(data[start:], endTag)
+	if end == -1 {
+		return ""
+	}
+
+	return data[start : start+end]
+}
+
+// ListAllPttCategories: Dökümandaki GetCategoryTree metodunu kullanarak hiyerarşiyi döker.
+func ListAllPttCategories(client *resty.Client, username, password string) {
+	fmt.Println("\n[*] PTT Kategori Hiyerarşisi Döküman Yöntemiyle Oluşturuluyor...")
+
+	// 1. Önce Ana Kategorileri alalım (Bu listenin geldiğini biliyoruz)
+	mainCategories := fetchMainCategoriesData(client, username, password)
+
+	fmt.Printf("[+] %d ana kategori üzerinden ağaç dallandırılıyor...\n", len(mainCategories))
+	fmt.Println("==================================================================")
+
+	for _, main := range mainCategories {
+		// Her ana kategori için dökümandaki GetCategoryTree metodunu çağıralım
+		fetchAndLogSubTree(client, username, password, main)
+
+		// Sunucuyu yormamak için 1 saniye bekleyelim
+		time.Sleep(1 * time.Second)
+	}
+
+	fmt.Println("==================================================================")
+	fmt.Println("[+] İşlem tamamlandı. Logları 'storage/bot_logs.txt' üzerinden inceleyebilirsin.")
+}
+
+func fetchAndLogSubTree(client *resty.Client, username, password string, parent CategoryHelper) {
+	url := "https://ws.pttavm.com:93/service.svc"
+
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken>
+	            <wsse:Username>%s</wsse:Username>
+	            <wsse:Password>%s</wsse:Password>
+	         </wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
+	   <soapenv:Body>
+	      <tem:GetCategoryTree>
+	         <tem:parent_id>%s</tem:parent_id>
+	         <tem:last_update>2025</tem:last_update>
+	      </tem:GetCategoryTree>
+	   </soapenv:Body>
+	</soapenv:Envelope>`, username, password, parent.ID)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetCategoryTree").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		fmt.Printf(" [!] %s sorgusunda hata: %v\n", parent.Name, err)
+		return
+	}
+
+	raw := resp.String()
+
+	// Regex ile gelen ağaçtaki tüm ID ve İsimleri avlayalım
+	// PTT Response etiketleri: <a:id> veya <a:category_id> ve <a:name> veya <a:category_name>
+	idRegex := regexp.MustCompile(`<(?:a:)?(?:id|category_id)>(\d+)</(?:a:)?(?:id|category_id)>`)
+	nameRegex := regexp.MustCompile(`<(?:a:)?(?:name|category_name)>([^<]+)</(?:a:)?(?:name|category_name)>`)
+
+	ids := idRegex.FindAllStringSubmatch(raw, -1)
+	names := nameRegex.FindAllStringSubmatch(raw, -1)
+
+	count := 0
+	for i := 0; i < len(ids); i++ {
+		currentID := ids[i][1]
+		if currentID == parent.ID {
+			continue
+		} // Kendini listelemesin
+
+		currentName := ""
+		if i < len(names) {
+			currentName = names[i][1]
+		}
+
+		if currentID != "" && currentName != "" {
+			currentName = strings.ReplaceAll(currentName, "&amp;", "&")
+			// İSTEDİĞİN FORMAT: [ID: 4] Kozmetik -> [ID: 1090] Besin Takviyeleri
+			logLine := fmt.Sprintf("[ID: %s] %-25s -> [ID: %s] %s", parent.ID, parent.Name, currentID, currentName)
+
+			fmt.Println(logLine)
+			if utils.InfoLogger != nil {
+				utils.InfoLogger.Println(logLine)
+			}
+			count++
+		}
+	}
+
+	if count == 0 && utils.InfoLogger != nil {
+		utils.InfoLogger.Printf(">>> %s (%s) için alt dal bulunamadı veya PTT boş döndü.", parent.Name, parent.ID)
+	}
+}
+
+// fetchMainCategoriesData: Sadece veriyi toplar, basmaz.
+func fetchMainCategoriesData(client *resty.Client, username, password string) []CategoryHelper {
+	url := "https://ws.pttavm.com:93/service.svc"
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken><wsse:Username>%s</wsse:Username><wsse:Password>%s</wsse:Password></wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
+	   <soapenv:Body><tem:GetMainCategories/></soapenv:Body>
+	</soapenv:Envelope>`, username, password)
+
+	resp, _ := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetMainCategories").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	var results []CategoryHelper
+	blocks := strings.Split(resp.String(), "<a:category>")
+	for _, b := range blocks {
+		if strings.Contains(b, "<a:id>") {
+			results = append(results, CategoryHelper{
+				ID:   extractSimpleTag(b, "id"),
+				Name: strings.ReplaceAll(extractSimpleTag(b, "name"), "&amp;", "&"),
+			})
+		}
+	}
+	return results
+}
+
+func printSubCategories(client *resty.Client, username, password string, parent CategoryHelper) {
+	url := "https://ws.pttavm.com:93/service.svc"
+
+	soapXML := fmt.Sprintf(`
+	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+	   <soapenv:Header>
+	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+	         <wsse:UsernameToken><wsse:Username>%s</wsse:Username><wsse:Password>%s</wsse:Password></wsse:UsernameToken>
+	      </wsse:Security>
+	   </soapenv:Header>
+	   <soapenv:Body>
+	      <tem:GetCategoriesByParentId>
+	         <tem:parentId>%s</tem:parentId>
+	      </tem:GetCategoriesByParentId>
+	   </soapenv:Body>
+	</soapenv:Envelope>`, username, password, parent.ID)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "text/xml;charset=UTF-8").
+		SetHeader("SOAPAction", "http://tempuri.org/IService/GetCategoriesByParentId").
+		SetBody([]byte(soapXML)).
+		Post(url)
+
+	if err != nil {
+		fmt.Printf(" [!] %s için hata: %v\n", parent.Name, err)
+		return
+	}
+
+	raw := resp.String()
+
+	// REGEX MANTIĞI: Etiketlerin adında ne olursa olsun (id, Id, CategoryId vb.)
+	// ve namespace (a:, b:) olsa da olmasa da veriyi yakalar.
+	// 1. Önce ID'leri bulalım
+	idRegex := regexp.MustCompile(`<(?:a:)?(?:id|Id|categoryId)>(\d+)</(?:a:)?(?:id|Id|categoryId)>`)
+	// 2. Sonra İsimleri bulalım
+	nameRegex := regexp.MustCompile(`<(?:a:)?(?:name|Name|category_name)>([^<]+)</(?:a:)?(?:name|Name|category_name)>`)
+
+	ids := idRegex.FindAllStringSubmatch(raw, -1)
+	names := nameRegex.FindAllStringSubmatch(raw, -1)
+
+	// PTT bazen ilk dönen ID ve Name bilgisini parent (üst) kategori için döner.
+	// Bu yüzden döngüde eşleştirme yaparken dikkatli oluyoruz.
+	count := 0
+	for i := 0; i < len(ids); i++ {
+		currentID := ids[i][1]
+		// Eğer dönen ID, parent ID ile aynıysa (kendini tekrar ediyorsa) geçiyoruz
+		if currentID == parent.ID {
+			continue
+		}
+
+		currentName := ""
+		if i < len(names) {
+			currentName = names[i][1]
+		}
+
+		if currentID != "" && currentName != "" {
+			currentName = strings.ReplaceAll(currentName, "&amp;", "&")
+			// İSTEDİĞİN OKUNAKLI FORMAT
+			logLine := fmt.Sprintf("[ID: %s] %-25s -> [ID: %s] %s", parent.ID, parent.Name, currentID, currentName)
+
+			fmt.Println(logLine)
+			if utils.InfoLogger != nil {
+				utils.InfoLogger.Println(logLine)
+			}
+			count++
+		}
+	}
+
+	// Eğer hala bir şey bulamadıysak, ham verinin bir kısmını loglayalım ki "mutfakta" ne olduğunu görelim
+	if count == 0 {
+		shortRaw := raw
+		if len(raw) > 300 {
+			shortRaw = raw[:300]
+		}
+		if utils.InfoLogger != nil {
+			utils.InfoLogger.Printf(">>> %s (%s) için veri ayıklanamadı. Ham Veri Başı: %s", parent.Name, parent.ID, shortRaw)
+		}
+	}
+}
+
+// extractFlexibleTag: Hem <a:tag> hem <tag> formatını destekler
+func extractFlexibleTag(data, tag string) string {
+	// Namespace'li hali (<a:id>)
+	start := strings.Index(data, "<a:"+tag+">")
+	endTag := "</a:" + tag + ">"
+
+	if start == -1 {
+		// Namespacesiz hali (<id>)
+		start = strings.Index(data, "<"+tag+">")
+		endTag = "</" + tag + ">"
+	}
+
+	if start == -1 {
+		return ""
+	}
+
+	startIndex := start + strings.Index(data[start:], ">") + 1
+	endIndex := strings.Index(data[startIndex:], endTag)
+
+	if endIndex == -1 {
+		return ""
+	}
+	return data[startIndex : startIndex+endIndex]
 }
