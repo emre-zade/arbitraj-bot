@@ -57,12 +57,10 @@ func main() {
 			var tid string
 			fmt.Print("\n[?] Sorgulanacak PTT Tracking ID girin: ")
 			fmt.Scanln(&tid)
-
 			if tid == "" {
 				fmt.Println("[-] Hata: Boş bir ID girdiniz.")
 				continue
 			}
-
 			fmt.Printf("[*] %s ID'li paket PTT'den sorgulanıyor...\n", tid)
 			services.GetPttTrackingStatus(client, cfg.Ptt.Username, cfg.Ptt.Password, tid)
 		case "9":
