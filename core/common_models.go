@@ -64,6 +64,7 @@ type PttProduct struct {
 	Stok           int
 	HazirlikSuresi int
 	Marka          string
+	KategoriAdi    string //Excel'de ve debug'da okunabilirlik için eklendi
 	KategoriId     int
 	Aciklama       string
 	Gorseller      []string
@@ -117,4 +118,39 @@ type MasterProduct struct {
 	SKU         string
 	CleanTitle  string
 	TargetBrand string
+}
+
+// --- GLOBAL KATEGORİ MODELLERİ (Merkezi Sistem İçin) ---
+
+// PlatformCategory: DB'deki 'platform_categories' tablosunu temsil eder
+type PlatformCategory struct {
+	Platform     string // 'ptt', 'pazarama', 'hb'
+	CategoryID   string // Platformun verdiği ID
+	CategoryName string // Platformun verdiği isim
+	ParentID     string // Üst kategori ID'si
+	IsLeaf       bool   // En alt kategori mi? (Ürün yüklenebilir mi?)
+}
+
+// CategoryMapping: Senin Master kategorilerini platform ID'lerine bağlar
+type CategoryMapping struct {
+	MasterCategoryName string // Örn: 'Bebek Şampuanı'
+	PttID              int
+	PazaramaID         string
+	HbID               string
+}
+
+// --- PAZARAMA KATEGORİ API MODELLERİ ---
+
+type PazaramaCategoryResponse struct {
+	Data    []PazaramaCategory `json:"data"`
+	Success bool               `json:"success"`
+	Message string             `json:"message"`
+}
+
+type PazaramaCategory struct {
+	ID       string             `json:"id"`
+	Name     string             `json:"name"`
+	ParentID string             `json:"parentId"`
+	IsLeaf   bool               `json:"leaf"`     // Dokümanda 'leaf' olarak geçer
+	Children []PazaramaCategory `json:"children"` // Alt kategoriler (Recursive yapı)
 }

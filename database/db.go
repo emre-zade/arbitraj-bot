@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 
@@ -135,4 +136,38 @@ func SavePttCategory(id int, name string) {
 	if err != nil {
 		log.Printf("[-] Kategori kaydedilemedi (%d): %v", id, err)
 	}
+}
+
+func InitGlobalCategoryTables() {
+	// 1. Tüm platformların ham kategorilerini tutan tablo
+	sqlAllCategories := `
+    CREATE TABLE IF NOT EXISTS platform_categories (
+        platform TEXT,         -- 'ptt', 'pazarama', 'hb'
+        category_id TEXT,      -- Platformun verdiği ID
+        category_name TEXT,    -- Platformun verdiği isim
+        parent_id TEXT,        -- Üst kategori (Ağaç yapısı için)
+        is_leaf BOOLEAN,       -- En alt kategori mi? (Ürün yüklenebilir mi?)
+        PRIMARY KEY(platform, category_id)
+    );`
+
+	// 2. Senin Master kategorilerini platform ID'lerine bağlayan tablo
+	sqlMappings := `
+    CREATE TABLE IF NOT EXISTS category_mappings (
+        master_category_name TEXT PRIMARY KEY, -- Örn: 'Diş Macunu'
+        ptt_id INTEGER,
+        pazarama_id TEXT,
+        hb_id TEXT
+    );`
+
+	_, err := DB.Exec(sqlAllCategories)
+	if err != nil {
+		log.Printf("Tablo oluşturma hatası (platform_categories): %v", err)
+	}
+
+	_, err = DB.Exec(sqlMappings)
+	if err != nil {
+		log.Printf("Tablo oluşturma hatası (category_mappings): %v", err)
+	}
+
+	fmt.Println("[LOG] Global kategori tabloları hazır.")
 }

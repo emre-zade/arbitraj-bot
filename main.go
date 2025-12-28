@@ -38,6 +38,7 @@ func main() {
 		fmt.Println("2- PttAVM Operasyonu")
 		fmt.Println("3- HB Operasyonu")
 		fmt.Println("4- PTT Takip Sorgula (Tracking ID)")
+		fmt.Println("7- Pazarama Kategorilerini çek")
 		fmt.Println("9- PttAVM Katalog Listesini Al")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
@@ -63,6 +64,25 @@ func main() {
 			}
 			fmt.Printf("[*] %s ID'li paket PTT'den sorgulanıyor...\n", tid)
 			services.GetPttTrackingStatus(client, cfg.Ptt.Username, cfg.Ptt.Password, tid)
+		case "7":
+			fmt.Println("[!] Pazarama Kategorileri Senkronize Ediliyor...")
+			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			if err != nil {
+				fmt.Printf("[!] Token alma hatası: %v\n", err)
+				break
+			}
+
+			err = services.SyncPazaramaCategories(client, token)
+			if err != nil {
+				fmt.Printf("[!] Kategori çekme hatası: %v\n", err)
+			} else {
+				fmt.Println("[+] Pazarama kategorileri başarıyla DB'ye işlendi.")
+			}
+		case "8":
+			var testCat string
+			fmt.Print("[?] Test etmek istediğiniz kategori adını yazın: ")
+			fmt.Scanln(&testCat)
+			RunSimilarityTest(testCat)
 		case "9":
 			services.ListAllPttCategories(client, cfg.Ptt.Username, cfg.Ptt.Password)
 		case "0":
@@ -129,11 +149,12 @@ func runPttExcelUploadOperation(client *resty.Client, cfg *core.Config) {
 			StokKodu:       row[0],                      // A: Satıcı Stok Kodu
 			UrunAdi:        row[1],                      // B: Ürün Adı
 			Fiyat:          utils.StringToFloat(row[2]), // C: Fiyat
-			Stok:           utils.StringToInt(row[3]),   // D: Stok
-			HazirlikSuresi: utils.StringToInt(row[4]),   // E: Hazırlık Süresi
-			Marka:          row[5],                      // F: Marka
-			KategoriId:     utils.StringToInt(row[6]),   // G: Kategori ID
-			KdvOrani:       utils.StringToInt(row[7]),   // H: KDV Oranı
+			KdvOrani:       utils.StringToInt(row[3]),   // D: KDV Oranı
+			Stok:           utils.StringToInt(row[4]),   // E: Stok
+			HazirlikSuresi: utils.StringToInt(row[5]),   // F: Hazırlık Süresi
+			Marka:          row[6],                      // G: Marka
+			KategoriAdi:    row[7],                      // H: Kategori Adı
+			KategoriId:     utils.StringToInt(row[8]),   // I: Kategori ID
 			Aciklama:       row[9],                      // J: Açıklama
 			Gorseller:      gorseller,                   // K-R: Görseller
 		}
@@ -359,5 +380,29 @@ func runHbSitSeedOperation(client *resty.Client, cfg *core.Config, reader *bufio
 			fmt.Printf(" [!] %s Hatası: %v\n", hb.SKU, errPrice)
 		}
 		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+// main.go veya bir test dosyası içine
+func RunSimilarityTest(myCategory string) {
+	fmt.Printf("\n[TEST] '%s' kategorisi için eşleştirme başlatıldı...\n", myCategory)
+
+	// utils/similarity_helper.go içindeki fonksiyonu çağırıyoruz
+	id, name, score := utils.FindBestCategoryMatch(myCategory, "pazarama")
+
+	fmt.Println("-------------------------------------------")
+	fmt.Printf("🔍 Aranan Kelime: %s\n", myCategory)
+	fmt.Printf("🎯 En Yakın Sonuç: %s\n", name)
+	fmt.Printf("🆔 Kategori ID: %s\n", id)
+	fmt.Printf("📊 Benzerlik Skoru: %.2f\n", score)
+	fmt.Println("-------------------------------------------")
+
+	// Skora göre aksiyon planı
+	if score >= 0.90 {
+		fmt.Printf("✅ [GÜVENLİ] %%%.0f benzerlik. Otomatik eşleştirme yapılabilir.\n", score*100)
+	} else if score >= 0.75 {
+		fmt.Printf("⚠️ [ONAY GEREKLİ] %%%.0f benzerlik. Manuel kontrol önerilir.\n", score*100)
+	} else {
+		fmt.Printf("❌ [BAŞARISIZ] Benzerlik çok düşük (%%%.0f). Uygun kategori bulunamadı.\n", score*100)
 	}
 }

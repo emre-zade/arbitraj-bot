@@ -283,7 +283,7 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 
 	kdvOrani := product.KdvOrani
 	if kdvOrani == 0 {
-		kdvOrani = 20
+		kdvOrani = 1
 	}
 
 	// --- ÇOKLU RESİM BLOĞU OLUŞTURMA ---
@@ -470,7 +470,7 @@ func GetPttMainCategories(client *resty.Client, username, password string) {
 			}
 		}
 	}
-	fmt.Println("==============================================\n")
+	fmt.Println("==============================================")
 }
 
 // extractSimpleTag: PTT'nin <a:tag>şeklindeki verilerini hızlıca ayıklar

@@ -3,12 +3,13 @@ module arbitraj-bot
 go 1.25.5
 
 require (
+	github.com/adrg/strutil v0.3.1
 	github.com/go-resty/resty/v2 v2.17.1
+	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/xuri/excelize/v2 v2.10.0
 )
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.32 // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/tiendc/go-deepcopy v1.7.1 // indirect
