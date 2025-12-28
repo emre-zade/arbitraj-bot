@@ -39,6 +39,9 @@ func InitDB() {
 	);`
 
 	_, err = DB.Exec(sqlStmt)
+
+	InitGlobalCategoryTables()
+
 	if err != nil {
 		log.Printf("Tablo hatası: %v", err)
 	}

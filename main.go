@@ -39,6 +39,7 @@ func main() {
 		fmt.Println("3- HB Operasyonu")
 		fmt.Println("4- PTT Takip Sorgula (Tracking ID)")
 		fmt.Println("7- Pazarama Kategorilerini çek")
+		fmt.Println("8- Kategori ara (test)")
 		fmt.Println("9- PttAVM Katalog Listesini Al")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
@@ -71,7 +72,6 @@ func main() {
 				fmt.Printf("[!] Token alma hatası: %v\n", err)
 				break
 			}
-
 			err = services.SyncPazaramaCategories(client, token)
 			if err != nil {
 				fmt.Printf("[!] Kategori çekme hatası: %v\n", err)
@@ -79,10 +79,19 @@ func main() {
 				fmt.Println("[+] Pazarama kategorileri başarıyla DB'ye işlendi.")
 			}
 		case "8":
-			var testCat string
+			// fmt.Scanln yerine bufio kullanarak tüm satırı okuyoruz
 			fmt.Print("[?] Test etmek istediğiniz kategori adını yazın: ")
-			fmt.Scanln(&testCat)
-			RunSimilarityTest(testCat)
+			// Okumadan önce buffer'ı temizlemek gerekebilir (önceki Scanln'den kalan \n için)
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				testCat := scanner.Text()
+				fmt.Printf("[LOG] Arama terimi alındı: '%s'\n", testCat)
+				if testCat != "" {
+					RunSimilarityTest(testCat)
+				} else {
+					fmt.Println("[!] Hata: Boş bir isim girdiniz.")
+				}
+			}
 		case "9":
 			services.ListAllPttCategories(client, cfg.Ptt.Username, cfg.Ptt.Password)
 		case "0":
@@ -383,26 +392,43 @@ func runHbSitSeedOperation(client *resty.Client, cfg *core.Config, reader *bufio
 	}
 }
 
-// main.go veya bir test dosyası içine
 func RunSimilarityTest(myCategory string) {
-	fmt.Printf("\n[TEST] '%s' kategorisi için eşleştirme başlatıldı...\n", myCategory)
+	fmt.Printf("\n[TEST] '%s' kategorisi için eşleşme aranıyor...\n", myCategory)
 
-	// utils/similarity_helper.go içindeki fonksiyonu çağırıyoruz
-	id, name, score := utils.FindBestCategoryMatch(myCategory, "pazarama")
+	matches := utils.FindTopCategoryMatches(myCategory, "pazarama")
+
+	if len(matches) == 0 {
+		fmt.Println("[!] Veritabanında eşleşen hiçbir kategori bulunamadı.")
+		return
+	}
+
+	// İlk sonucun yüzdesini hesaplayalım
+	topScorePct := matches[0].Score * 100
 
 	fmt.Println("-------------------------------------------")
-	fmt.Printf("🔍 Aranan Kelime: %s\n", myCategory)
-	fmt.Printf("🎯 En Yakın Sonuç: %s\n", name)
-	fmt.Printf("🆔 Kategori ID: %s\n", id)
-	fmt.Printf("📊 Benzerlik Skoru: %.2f\n", score)
-	fmt.Println("-------------------------------------------")
 
-	// Skora göre aksiyon planı
-	if score >= 0.90 {
-		fmt.Printf("✅ [GÜVENLİ] %%%.0f benzerlik. Otomatik eşleştirme yapılabilir.\n", score*100)
-	} else if score >= 0.75 {
-		fmt.Printf("⚠️ [ONAY GEREKLİ] %%%.0f benzerlik. Manuel kontrol önerilir.\n", score*100)
-	} else {
-		fmt.Printf("❌ [BAŞARISIZ] Benzerlik çok düşük (%%%.0f). Uygun kategori bulunamadı.\n", score*100)
+	// MANTIĞIMIZ: Eğer %95 ve üzeri ise sadece en iyisini göster
+	if topScorePct >= 95 {
+		fmt.Printf("1. 🎯 Sonuç: %s\n", matches[0].Name)
+		fmt.Printf("   🆔 ID: %s\n", matches[0].ID)
+		fmt.Printf("   📊 Skor: %%%.0f\n", topScorePct)
+		fmt.Println("   ✨ [TAM İSABET]")
+		fmt.Println("-------------------------------------------")
+		return // Diğerlerini göstermeden çık
+	}
+
+	// %95 altındaysa Top 3 listesini dök
+	for i, match := range matches {
+		scorePct := match.Score * 100
+		prefix := fmt.Sprintf("%d. ", i+1)
+
+		fmt.Printf("%s🎯 Sonuç: %s\n", prefix, match.Name)
+		fmt.Printf("   🆔 ID: %s\n", match.ID)
+		fmt.Printf("   📊 Skor: %%%.0f\n", scorePct)
+
+		if i == 0 && scorePct >= 85 {
+			fmt.Println("   ✅ [YÜKSEK OLASILIK]")
+		}
+		fmt.Println("-------------------------------------------")
 	}
 }

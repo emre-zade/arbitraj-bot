@@ -2,33 +2,55 @@ package utils
 
 import (
 	"arbitraj-bot/database"
+	"sort"
+	"strings"
 
 	"github.com/adrg/strutil"
 	"github.com/adrg/strutil/metrics"
 )
 
-func FindBestCategoryMatch(myCategoryName string, platform string) (string, string, float64) {
+// MatchResult: Eşleşme sonuçlarını tutan yapı
+type MatchResult struct {
+	ID    string
+	Name  string
+	Score float64
+}
+
+func FindTopCategoryMatches(myCategoryName string, platform string) []MatchResult {
 	rows, _ := database.DB.Query("SELECT category_id, category_name FROM platform_categories WHERE platform = ? AND is_leaf = 1", platform)
 	defer rows.Close()
 
-	bestID := ""
-	bestName := ""
-	maxScore := 0.0
+	var results []MatchResult
 	metric := metrics.NewJaroWinkler()
+
+	// Karşılaştırma yapılacak ismi küçük harfe çeviriyoruz (Turkish friendly)
+	searchName := strings.ToLower(strings.TrimSpace(myCategoryName))
 
 	for rows.Next() {
 		var id, name string
 		rows.Scan(&id, &name)
 
-		// Benzerlik skorunu hesapla (0.0 - 1.0 arası)
-		score := strutil.Similarity(myCategoryName, name, metric)
+		// DB'den gelen ismi de küçük harf yapıyoruz
+		targetName := strings.ToLower(name)
 
-		if score > maxScore {
-			maxScore = score
-			bestID = id
-			bestName = name
-		}
+		// Benzerlik skorunu hesapla
+		score := strutil.Similarity(searchName, targetName, metric)
+
+		results = append(results, MatchResult{
+			ID:    id,
+			Name:  name, // Orijinal ismi saklıyoruz (Görsel için)
+			Score: score,
+		})
 	}
 
-	return bestID, bestName, maxScore
+	// Skorlara göre büyükten küçüğe sırala
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Eğer 3'ten az sonuç varsa hepsini, çoksa ilk 3'ü döndür
+	if len(results) > 3 {
+		return results[:3]
+	}
+	return results
 }
