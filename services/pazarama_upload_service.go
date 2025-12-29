@@ -105,8 +105,6 @@ func FillPazaramaCategoryIDs(filePath string) error {
 	return nil
 }
 
-// services/pazarama_upload_service.go
-
 func TestRealProductUpload(client *resty.Client, token string, filePath string, rowIndex int) (string, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
@@ -160,7 +158,12 @@ func TestRealProductUpload(client *resty.Client, token string, filePath string, 
 		VatRate:      kdv,
 		CategoryId:   kategoriId,
 		Images:       pazaramaImages,
-		Attributes:   []core.PazaramaAttribute{},
+		Attributes: []core.PazaramaAttribute{
+			{
+				AttributeId:      "08b2020b-e519-405f-85e2-1fd712104097", // Renk Özelliği
+				AttributeValueId: "4cc993c1-ff99-4cfd-96e2-989b8877d386", // Krom Değeri
+			},
+		},
 	}
 
 	// CreateProductPazarama'dan gelen batchID'yi yukarı fırlatıyoruz

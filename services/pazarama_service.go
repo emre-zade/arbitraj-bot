@@ -279,13 +279,12 @@ func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string
 }
 
 func WatchBatchStatus(client *resty.Client, token string, batchID string) {
-	fmt.Printf("\n[WATCHER] %s ID'li işlem takip ediliyor...\n", batchID)
-
 	for {
 		var result struct {
 			Data struct {
 				Status      int `json:"status"` // 1: InProgress, 2: Done, 3: Error
 				FailedCount int `json:"failedCount"`
+				TotalCount  int `json:"totalCount"`
 				BatchResult []struct {
 					Reason string `json:"reason"`
 					Code   string `json:"code"`
@@ -294,32 +293,80 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string) {
 			Success bool `json:"success"`
 		}
 
-		_, err := client.R().
+		resp, err := client.R().
 			SetAuthToken(token).
 			SetQueryParam("BatchRequestId", batchID).
 			SetResult(&result).
 			Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
 
 		if err != nil {
-			fmt.Printf("\r[!] Bağlantı hatası, tekrar deneniyor... %v", err)
-		} else if result.Success {
-			status := result.Data.Status
+			time.Sleep(5 * time.Second)
+			continue
+		}
 
-			// Konsolu temizlemeden aynı satıra yazmak için \r kullanıyoruz
-			if status == 1 {
-				fmt.Printf("\r[WAIT] İşlem devam ediyor (InProgress)...")
-			} else if status == 2 {
-				fmt.Println("\n[INFO] Ürün başarıyla Pazarama paneline iletildi. Kontrol/Onay süreci başladı.")
-				return
-			} else if status == 3 || result.Data.FailedCount > 0 {
-				fmt.Println("\n[HATA] Ürün yüklenirken hata oluştu!")
-				for _, res := range result.Data.BatchResult {
-					fmt.Printf("[DETAY] Hata Nedeni: %s\n", res.Reason)
+		if result.Success {
+			status := result.Data.Status
+			failed := result.Data.FailedCount
+
+			if status == 2 { // İşlem bitti
+				if failed > 0 {
+					// --- BURASI HATAYI YAKALAYAN KISIM ---
+					fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s işlendi ama ürün REDDEDİLDİ!\n", batchID)
+
+					fmt.Printf("[DEBUG] API Ham Yanıtı: %s\n", resp.String())
+
+					if len(result.Data.BatchResult) > 0 {
+						for _, res := range result.Data.BatchResult {
+							fmt.Printf("[REDE NEDENİ] %s\n", res.Reason)
+						}
+					} else {
+						fmt.Println("[REDE NEDENİ] Pazarama detay belirtmedi, panelden 'Hatalı Ürünler' kısmına bakmalısın.")
+					}
+					fmt.Print("Seçiminiz: ")
+					return
 				}
+
+				// Eğer hata yoksa gerçekten başarılıdır
+				fmt.Printf("\n\n[ARKAPLAN HABERCİ] Batch %s: Onay Alındı! Ürün yayına hazır.\n", batchID)
+				fmt.Print("Seçiminiz: ")
+				return
+			} else if status == 3 {
+				fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s sistemi çöktü veya ağır hata aldı.\n", batchID)
+				fmt.Print("Seçiminiz: ")
 				return
 			}
 		}
 
-		time.Sleep(5 * time.Second) // 5 saniyede bir sorgula
+		time.Sleep(10 * time.Second)
 	}
+}
+
+func GetCategoryAttributes(client *resty.Client, token string, categoryID string) error {
+	fmt.Printf("\n[LOG] %s kategorisi için özellikler çekiliyor...\n", categoryID)
+
+	// DİKKAT: Endpoint ve Parametre ismi (Id) güncellendi!
+	resp, err := client.R().
+		SetAuthToken(token).
+		SetQueryParam("Id", categoryID). // "categoryId" değil, "Id"
+		Get("https://isortagimapi.pazarama.com/category/getCategoryWithAttributes")
+
+	if err != nil {
+		return fmt.Errorf("Bağlantı hatası: %v", err)
+	}
+
+	// Senin sevdiğin detaylı loglama: HTTP kodunu mutlaka görelim
+	fmt.Printf("[LOG] HTTP Durum Kodu: %d\n", resp.StatusCode())
+
+	if resp.StatusCode() == 404 {
+		fmt.Println("[HATA] Endpoint bulunamadı (404). Lütfen URL'yi kontrol et.")
+		return nil
+	}
+
+	if resp.String() == "" || resp.String() == "null" {
+		fmt.Println("[UYARI] API yanıtı boş döndü. Parametre ismini (Id) veya CategoryID'yi kontrol etmelisin.")
+	} else {
+		fmt.Printf("[LOG] API Yanıtı: %s\n", resp.String())
+	}
+
+	return nil
 }

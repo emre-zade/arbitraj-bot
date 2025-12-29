@@ -145,7 +145,10 @@ func main() {
 			if err != nil {
 				fmt.Printf("[HATA] Markalar çekilemedi: %v\n", err)
 			}
-
+		case "14":
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			categoryid := "9d4d6cf1-b803-4849-aa83-21e5453acca7"
+			services.GetCategoryAttributes(client, token, categoryid)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
