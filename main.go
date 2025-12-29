@@ -41,6 +41,10 @@ func main() {
 		fmt.Println("7- Pazarama Kategorilerini çek")
 		fmt.Println("8- Kategori ara (test)")
 		fmt.Println("9- PttAVM Katalog Listesini Al")
+		fmt.Println("10- Pazarama Excel ID Doldur")
+		fmt.Println("11- DB tablosunda ki tüm kategori eşleştirme hafızası sil")
+		fmt.Println("12- Pazarama Ürün Yükleme Testi")
+		fmt.Println("13- Pazarama Ürün Markalarını Çek")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
 
@@ -94,6 +98,54 @@ func main() {
 			}
 		case "9":
 			services.ListAllPttCategories(client, cfg.Ptt.Username, cfg.Ptt.Password)
+		case "10":
+			fmt.Println("[!] Pazarama Excel ID Doldurma Başlatılıyor...")
+			filePath := "./storage/pazarama_urun_yukleme.xlsx"
+			err := services.FillPazaramaCategoryIDs(filePath)
+			if err != nil {
+				fmt.Printf("[!] Hata: %v\n", err)
+			}
+		case "11":
+			if core.AskConfirmation("Tüm kategori eşleştirme hafızası silinecek. Emin misin?") {
+				database.ClearCategoryMappings()
+			}
+		case "12":
+			fmt.Println("\n[!] Pazarama Gerçek Ürün Testi Başlıyor...")
+
+			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			if err != nil {
+				fmt.Printf("[HATA] Token alınamadı: %v\n", err)
+				break
+			}
+
+			filePath := "./storage/pazarama_urun_yukleme.xlsx"
+
+			var rowIndex int
+			fmt.Print("\n[?] Hangi satırdaki ürün yüklenecek?: ")
+			fmt.Scanln(&rowIndex)
+			rowIndex--
+
+			batchID, err := services.TestRealProductUpload(client, token, filePath, rowIndex)
+
+			if err != nil {
+				fmt.Printf("[!] Yükleme başlatılırken hata oluştu: %v\n", err)
+			} else if batchID != "" {
+				fmt.Printf("[OK] Ürün sıraya alındı. Takip başlatılıyor. BatchID: %s\n", batchID)
+
+				go services.WatchBatchStatus(client, token, batchID)
+
+				time.Sleep(500 * time.Millisecond)
+			} else {
+				fmt.Println("[!] BatchID alınamadı, takip yapılamıyor.")
+			}
+
+		case "13":
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			err := services.SyncPazaramaBrands(client, token)
+			if err != nil {
+				fmt.Printf("[HATA] Markalar çekilemedi: %v\n", err)
+			}
+
 		case "0":
 			fmt.Println("Güle güle!")
 			return

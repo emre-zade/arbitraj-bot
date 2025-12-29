@@ -154,3 +154,47 @@ type PazaramaCategory struct {
 	IsLeaf   bool               `json:"leaf"`     // Dokümanda 'leaf' olarak geçer
 	Children []PazaramaCategory `json:"children"` // Alt kategoriler (Recursive yapı)
 }
+
+//----------------------
+
+type PazaramaCreateProductRequest struct {
+	Products []PazaramaProductItem `json:"products"` // "items" değil "products" olmalı
+}
+
+type PazaramaProductItem struct {
+	Code         string              `json:"code"`
+	Name         string              `json:"name"`
+	DisplayName  string              `json:"displayName"`
+	Description  string              `json:"description"`
+	BrandId      string              `json:"brandId"`   // BrandName değil ID istiyor
+	GroupCode    string              `json:"groupCode"` // Zorunlu
+	Desi         int                 `json:"desi"`      // Zorunlu
+	StockCount   int                 `json:"stockCount"`
+	StockCode    string              `json:"stockCode"`
+	CurrencyType string              `json:"currencyType"` // "TRY"
+	ListPrice    float64             `json:"listPrice"`
+	SalePrice    float64             `json:"salePrice"`
+	VatRate      int                 `json:"vatRate"`
+	CategoryId   string              `json:"categoryId"`
+	Images       []PazaramaImage     `json:"images"`
+	Attributes   []PazaramaAttribute `json:"attributes"`
+}
+
+type PazaramaImage struct {
+	Imageurl string `json:"imageurl"` // "url" değil "imageurl" (küçük harf!)
+}
+
+type PazaramaAttribute struct {
+	AttributeId      string `json:"attributeId"`
+	AttributeValueId string `json:"attributeValueId"`
+}
+
+type PazaramaBrandResponse struct {
+	Data    []PazaramaBrand `json:"data"`
+	Success bool            `json:"success"`
+}
+
+type PazaramaBrand struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}

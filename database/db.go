@@ -18,7 +18,7 @@ func InitDB() {
 		os.Mkdir("./storage", 0755)
 	}
 
-	DB, err = sql.Open("sqlite3", "./storage/arbitraj.db")
+	DB, err = sql.Open("sqlite3", "./storage/arbitraj.db?_journal=WAL")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,6 +41,7 @@ func InitDB() {
 	_, err = DB.Exec(sqlStmt)
 
 	InitGlobalCategoryTables()
+	InitBrandTable()
 
 	if err != nil {
 		log.Printf("Tablo hatası: %v", err)
@@ -173,4 +174,24 @@ func InitGlobalCategoryTables() {
 	}
 
 	fmt.Println("[LOG] Global kategori tabloları hazır.")
+}
+
+func ClearCategoryMappings() {
+	_, err := DB.Exec("DELETE FROM category_mappings")
+	if err != nil {
+		fmt.Printf("[HATA] Mapping tablosu temizlenemedi: %v\n", err)
+	} else {
+		fmt.Println("[+] Kategori eşleştirmeleri başarıyla sıfırlandı. Tertemiz bir başlangıç yapabilirsin!")
+	}
+}
+
+func InitBrandTable() {
+	sql := `
+    CREATE TABLE IF NOT EXISTS platform_brands (
+        platform TEXT,
+        brand_id TEXT,
+        brand_name TEXT,
+        PRIMARY KEY(platform, brand_id)
+    );`
+	DB.Exec(sql)
 }
