@@ -3,6 +3,7 @@ package services
 import (
 	"arbitraj-bot/core"
 	"arbitraj-bot/database"
+	"arbitraj-bot/utils"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -161,13 +162,17 @@ func CreateProductPazarama(client *resty.Client, token string, product core.Paza
 }
 
 func GetBrandIDByName(client *resty.Client, token string, brandName string) (string, error) {
-	// 1. Temizlik: Başındaki sonundaki boşlukları atalım
+	// 1. Temizlik ve Normalizasyon (Tüm sorguları büyük harf üzerinden yapacağız)
 	brandName = strings.TrimSpace(brandName)
+	normalizedName := strings.ToUpper(brandName)
 
-	// 2. Önce lokal DB'ye sor
+	// 2. Önce lokal DB'ye sor (UPPER fonksiyonu ile case-insensitive kontrol)
 	var brandID string
-	err := database.DB.QueryRow("SELECT brand_id FROM platform_brands WHERE platform = 'pazarama' AND brand_name = ?", brandName).Scan(&brandID)
+	err := database.DB.QueryRow("SELECT brand_id FROM platform_brands WHERE platform = 'pazarama' AND UPPER(brand_name) = ?", normalizedName).Scan(&brandID)
 	if err == nil {
+		if brandID == "NOT_FOUND" {
+			return "", fmt.Errorf("MARKA PAZARAMADA YOK (KARA LISTE)")
+		}
 		return brandID, nil
 	}
 
@@ -177,42 +182,39 @@ func GetBrandIDByName(client *resty.Client, token string, brandName string) (str
 	resp, err := client.R().
 		SetAuthToken(token).
 		SetQueryParam("Page", "1").
-		SetQueryParam("Size", "20"). // Biraz geniş bakalım
+		SetQueryParam("Size", "50").
 		SetQueryParam("name", brandName).
 		SetResult(&result).
 		Get("https://isortagimapi.pazarama.com/brand/getBrands")
+
+	if resp.StatusCode() != 200 {
+		fmt.Printf("[DEBUG] Pazarama Hata Yanıtı: %s\n", resp.String())
+	}
 
 	if err != nil {
 		return "", fmt.Errorf("Bağlantı hatası: %v", err)
 	}
 
-	fmt.Printf("[LOG] Marka Sorgu HTTP Kodu: %d\n", resp.StatusCode())
-
-	if !resp.IsSuccess() {
-		fmt.Printf("[UYARI] API isteği başarısız oldu: %s\n", resp.String())
-	}
-
-	// 3. Bulunan sonuçları loglayalım (Senin istediğin detaylı log)
+	// 3. API'de hiç sonuç yoksa kara listeye al
 	if len(result.Data) == 0 {
-		fmt.Printf("[UYARI] Pazarama '%s' ismiyle hiçbir marka döndürmedi.\n", brandName)
+		fmt.Printf("[UYARI] Pazarama '%s' ismiyle sonuç döndürmedi. Kara listeye alınıyor.\n", brandName)
+		database.DB.Exec("INSERT OR REPLACE INTO platform_brands (platform, brand_id, brand_name) VALUES ('pazarama', 'NOT_FOUND', ?)", normalizedName)
+		utils.WriteToLogFile(fmt.Sprintf("[BRAND_ERROR] %s markası bulunamadı, kara listeye alındı.", brandName))
 		return "", fmt.Errorf("Marka bulunamadı")
 	}
 
-	fmt.Printf("[LOG] API %d adet sonuç döndürdü. Eşleştirme deneniyor...\n", len(result.Data))
-
+	// 4. Eşleştirme denemesi
 	for _, b := range result.Data {
-		fmt.Printf("   - Kontrol ediliyor: '%s' (ID: %s)\n", b.Name, b.ID)
-
-		// Büyük/Küçük harf ve boşluk duyarsız karşılaştırma
 		if strings.EqualFold(strings.TrimSpace(b.Name), brandName) {
 			fmt.Printf("[OK] Tam eşleşme sağlandı: %s\n", b.Name)
-			database.DB.Exec("INSERT OR REPLACE INTO platform_brands (platform, brand_id, brand_name) VALUES ('pazarama', ?, ?)", b.ID, b.Name)
+			// DB'ye her zaman BÜYÜK HARF kaydedelim ki bir sonraki SELECT yakalasın
+			database.DB.Exec("INSERT OR REPLACE INTO platform_brands (platform, brand_id, brand_name) VALUES ('pazarama', ?, ?)", b.ID, strings.ToUpper(b.Name))
 			return b.ID, nil
 		}
 	}
 
-	// Eğer buraya geldiyse isimler tam uymuyordur
-	fmt.Printf("[HATA] '%s' için tam eşleşen bir marka bulunamadı ama benzer sonuçlar yukarıda listelendi.\n", brandName)
+	// 5. Sonuç döndü ama tam isim uymuyorsa yine kara listeye alalım
+	database.DB.Exec("INSERT OR REPLACE INTO platform_brands (platform, brand_id, brand_name) VALUES ('pazarama', 'NOT_FOUND', ?)", normalizedName)
 	return "", fmt.Errorf("Tam eşleşme sağlanamadı")
 }
 
@@ -284,15 +286,20 @@ func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string
 	fmt.Printf("[LOG] HTTP: %d | Yanıt: %s\n", resp.StatusCode(), resp.String())
 }
 
-func WatchBatchStatus(client *resty.Client, token string, batchID string) {
+func WatchBatchStatus(client *resty.Client, token string, batchID string, items []core.PazaramaProductItem) {
 	fmt.Printf("\n[WATCHER] %s takip ediliyor...\n", batchID)
+	startTime := time.Now()
 
 	for {
+		if time.Since(startTime) > 15*time.Minute {
+			utils.WriteToLogFile(fmt.Sprintf("[TIMEOUT] Batch %s zaman aşımına uğradı.", batchID))
+			return
+		}
+
 		var result struct {
 			Data struct {
-				Status      int `json:"status"` // 1: InProgress, 2: Done, 3: Error
+				Status      int `json:"status"`
 				FailedCount int `json:"failedCount"`
-				TotalCount  int `json:"totalCount"`
 				BatchResult []struct {
 					Reason string `json:"reason"`
 					Code   string `json:"code"`
@@ -301,53 +308,54 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string) {
 			Success bool `json:"success"`
 		}
 
-		resp, err := client.R().
+		_, err := client.R().
 			SetAuthToken(token).
 			SetQueryParam("BatchRequestId", batchID).
 			SetResult(&result).
 			Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
 
-		if err != nil {
-			// Hata olsa bile hemen pes etme, bekle ve tekrar dene
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		if result.Success {
+		if err == nil && result.Success {
 			status := result.Data.Status
-			failed := result.Data.FailedCount
 
 			if status == 1 {
-				fmt.Printf("\r[WAIT] Pazarama ürünü işliyor (InProgress)... Batch: %s", batchID)
+				fmt.Printf("\r[WAIT] Pazarama ürünü işliyor... Batch: %s", batchID)
+			} else if status == 2 {
+				if result.Data.FailedCount > 0 {
+					fmt.Printf("\n[HATA] Batch %s içerisinde %d ürün reddedildi.\n", batchID, result.Data.FailedCount)
 
-			} else if status == 2 { // İşlem bitti
-				if failed > 0 {
-					fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s işlendi ama %d ürün REDDEDİLDİ!\n", batchID, failed)
-					fmt.Printf("[DEBUG] API Ham Yanıtı: %s\n", resp.String())
+					// KRİTİK KISIM: Hataları ürün bazlı eşleştiriyoruz
+					// Pazarama genellikle gönderilen sırayla sonuç döner.
+					for i, res := range result.Data.BatchResult {
+						// Eğer bu indexteki ürün hatalıysa (Reason veya Code doluysa)
+						if res.Reason != "" || res.Code != "0" { // "0" genellikle başarı kodudur
+							var pName, pBarcode string
+							if i < len(items) {
+								pName = items[i].Name
+								pBarcode = items[i].Code
+							} else {
+								pName = "Bilinmeyen Ürün"
+								pBarcode = "Bilinmeyen Barkod"
+							}
 
-					if len(result.Data.BatchResult) > 0 {
-						for _, res := range result.Data.BatchResult {
-							fmt.Printf("[REDE NEDENİ] %s\n", res.Reason)
+							// Boş reason geliyorsa en azından kodu basalım
+							finalReason := res.Reason
+							if finalReason == "" {
+								finalReason = "Pazarama hata açıklaması dönmedi (Hata Kodu: " + res.Code + ")"
+							}
+
+							logMsg := fmt.Sprintf("[RED] Barkod: %s | İsim: %s | Neden: %s", pBarcode, pName, finalReason)
+							utils.WriteToLogFile(logMsg)
+							fmt.Println(logMsg)
 						}
-					} else {
-						fmt.Println("[REDE NEDENİ] Detay belirtilmedi, panelden kontrol et.")
 					}
-					fmt.Print("\nSeçiminiz: ")
-					return
+				} else {
+					fmt.Printf("\n[OK] Batch %s içindeki tüm ürünler onaylandı.\n", batchID)
+					utils.WriteToLogFile(fmt.Sprintf("[SUCCESS] Batch %s başarıyla yüklendi.", batchID))
 				}
-
-				fmt.Printf("\n\n[ARKAPLAN HABERCİ] Batch %s: Başarıyla Pazarama'ya iletildi.\n", batchID)
-				fmt.Print("Seçiminiz: ")
-				return
-
-			} else if status == 3 {
-				fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s ağır hata aldı (Status 3).\n", batchID)
-				fmt.Print("Seçiminiz: ")
 				return
 			}
 		}
-
-		time.Sleep(10 * time.Second)
+		time.Sleep(15 * time.Second)
 	}
 }
 
@@ -465,4 +473,33 @@ func GetDefaultAttributesFromDB(categoryID string) []core.PazaramaAttribute {
 		}
 	}
 	return attrs
+}
+
+func SendBatchToPazarama(client *resty.Client, token string, products []core.PazaramaProductItem) (string, error) {
+	request := core.PazaramaCreateProductRequest{
+		Products: products,
+	}
+
+	var apiResp struct {
+		Data struct {
+			BatchRequestId string `json:"batchRequestId"`
+		} `json:"data"`
+		Success bool `json:"success"`
+	}
+
+	resp, err := client.R().
+		SetAuthToken(token).
+		SetBody(request).
+		SetResult(&apiResp).
+		Post("https://isortagimapi.pazarama.com/product/create")
+
+	if err != nil {
+		return "", fmt.Errorf("HTTP Hatası: %v", err)
+	}
+
+	if !apiResp.Success {
+		return "", fmt.Errorf("Pazarama API Hatası: %s", resp.String())
+	}
+
+	return apiResp.Data.BatchRequestId, nil
 }

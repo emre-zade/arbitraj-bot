@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 )
 
 // Logger nesnesi
@@ -35,5 +36,21 @@ func LogJSON(v interface{}) {
 	// Dosyaya da yaz (Kalıcı kayıt için)
 	if InfoLogger != nil {
 		InfoLogger.Println("\n" + string(data))
+	}
+}
+
+func WriteToLogFile(message string) {
+	f, err := os.OpenFile("./storage/bot_logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("[HATA] Log dosyasına yazılamadı: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	logMessage := fmt.Sprintf("[%s] %s\n", currentTime, message)
+
+	if _, err := f.WriteString(logMessage); err != nil {
+		fmt.Printf("[HATA] Yazma hatası: %v\n", err)
 	}
 }

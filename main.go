@@ -43,10 +43,13 @@ func main() {
 		fmt.Println("9- PttAVM Katalog Listesini Al")
 		fmt.Println("10- Pazarama Excel ID Doldur")
 		fmt.Println("11- DB tablosunda ki tüm kategori eşleştirme hafızası sil")
-		fmt.Println("12- Pazarama Ürün Yükleme Testi")
+		fmt.Println("12- Pazarama Tekil Ürün Yükle (Excel)")
 		fmt.Println("13- Pazarama Ürün Markalarını Çek")
 		fmt.Println("14- Pazarama Kategori Özelliklerini Al")
 		fmt.Println("15- Pazarama Kategori Taslağı Oluştur")
+		fmt.Println("16- Pazarama Toplu Ürün Yükle")
+		fmt.Println("17- Pazarama Barkod karşılaştırmasını başlat")
+		fmt.Println("18- Pazarama Eksik ürünleri yükle")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
 
@@ -112,7 +115,7 @@ func main() {
 				database.ClearCategoryMappings()
 			}
 		case "12":
-			fmt.Println("\n[!] Pazarama Gerçek Ürün Testi Başlıyor...")
+			fmt.Println("\n[!] Pazarama Tekil Ürün Yükle (Excel)")
 
 			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
 			if err != nil {
@@ -127,14 +130,17 @@ func main() {
 			fmt.Scanln(&rowIndex)
 			rowIndex--
 
-			batchID, err := services.TestRealProductUpload(client, token, filePath, rowIndex)
+			// DEĞİŞİKLİK BURADA: 'product' değişkenini de alıyoruz
+			batchID, product, err := services.TestRealProductUpload(client, token, filePath, rowIndex)
 
 			if err != nil {
 				fmt.Printf("[!] Yükleme başlatılırken hata oluştu: %v\n", err)
 			} else if batchID != "" {
 				fmt.Printf("[OK] Ürün sıraya alındı. Takip başlatılıyor. BatchID: %s\n", batchID)
 
-				go services.WatchBatchStatus(client, token, batchID)
+				// DEĞİŞİKLİK BURADA: Tek ürünü bir slice (liste) içine koyup Watcher'a veriyoruz
+				items := []core.PazaramaProductItem{product}
+				go services.WatchBatchStatus(client, token, batchID, items)
 
 				time.Sleep(500 * time.Millisecond)
 			} else {
@@ -161,6 +167,37 @@ func main() {
 			fmt.Scanln(&catID)
 			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
 			services.AutoMapMandatoryAttributes(client, token, catID)
+
+		case "16":
+			fmt.Println("\n[!!!] DİKKAT: Pazarama'ya yüklenmek üzere! Başlıyoruz...")
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			filePath := "./storage/supradyn.xlsx"
+
+			err := services.BulkUploadPazarama(client, token, filePath)
+			if err != nil {
+				fmt.Printf("[KRİTİK HATA] Bulk yükleme başlatılamadı: %v\n", err)
+			}
+
+		case "17":
+			fmt.Println("\n[COMPARER] Barkod karşılaştırma başlatılıyor...")
+			origFile := "./storage/pazarama_urun_yukleme.xlsx"
+			panelFile := "./storage/Ürünleriniz-30.12.25-16.28.xlsx" // Panelden indirdiğin dosya
+
+			_, err := utils.CompareExcelBarcodes(origFile, panelFile)
+			if err != nil {
+				fmt.Printf("[HATA] Karşılaştırma başarısız: %v\n", err)
+			}
+
+		case "18":
+			fmt.Println("\n[RETRY] Eksik ürünlerin yükleme operasyonu başlatılıyor...")
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			origFile := "./storage/pazarama_urun_yukleme.xlsx"
+			missFile := "./storage/eksik_urunler.xlsx" // Karşılaştırma aracının oluşturduğu dosya
+
+			err := services.UploadMissingProductsPazarama(client, token, origFile, missFile)
+			if err != nil {
+				fmt.Printf("[HATA] Yeniden yükleme başarısız: %v\n", err)
+			}
 
 		case "0":
 			fmt.Println("Güle güle!")
