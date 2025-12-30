@@ -45,6 +45,8 @@ func main() {
 		fmt.Println("11- DB tablosunda ki tüm kategori eşleştirme hafızası sil")
 		fmt.Println("12- Pazarama Ürün Yükleme Testi")
 		fmt.Println("13- Pazarama Ürün Markalarını Çek")
+		fmt.Println("14- Pazarama Kategori Özelliklerini Al")
+		fmt.Println("15- Pazarama Kategori Taslağı Oluştur")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
 
@@ -145,10 +147,21 @@ func main() {
 			if err != nil {
 				fmt.Printf("[HATA] Markalar çekilemedi: %v\n", err)
 			}
+
 		case "14":
 			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			categoryid := "9d4d6cf1-b803-4849-aa83-21e5453acca7"
+			var categoryid string
+			fmt.Print("\n[?] Pazarama için kategori id girin: ")
+			fmt.Scanln(&categoryid)
 			services.GetCategoryAttributes(client, token, categoryid)
+
+		case "15":
+			fmt.Print("Analiz edilecek Kategori ID: ")
+			var catID string
+			fmt.Scanln(&catID)
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			services.AutoMapMandatoryAttributes(client, token, catID)
+
 		case "0":
 			fmt.Println("Güle güle!")
 			return

@@ -42,6 +42,7 @@ func InitDB() {
 
 	InitGlobalCategoryTables()
 	InitBrandTable()
+	InitPazaramaAttributeTable()
 
 	if err != nil {
 		log.Printf("Tablo hatası: %v", err)
@@ -194,4 +195,21 @@ func InitBrandTable() {
         PRIMARY KEY(platform, brand_id)
     );`
 	DB.Exec(sql)
+}
+
+func InitPazaramaAttributeTable() {
+	sql := `
+    CREATE TABLE IF NOT EXISTS platform_category_defaults (
+        platform TEXT,
+        category_id TEXT,
+        attribute_id TEXT,
+        attribute_name TEXT,
+        value_id TEXT,
+        value_name TEXT,
+        PRIMARY KEY(platform, category_id, attribute_id)
+    );`
+	_, err := DB.Exec(sql)
+	if err != nil {
+		fmt.Printf("[HATA] Attribute tablosu oluşturulamadı: %v\n", err)
+	}
 }

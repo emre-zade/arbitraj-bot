@@ -3,6 +3,7 @@ package services
 import (
 	"arbitraj-bot/core"
 	"arbitraj-bot/database"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -139,6 +140,11 @@ func CreateProductPazarama(client *resty.Client, token string, product core.Paza
 		SetBody(request).
 		SetResult(&apiResult). // Burası sonucu apiResult'a doldurur
 		Post("https://isortagimapi.pazarama.com/product/create")
+
+	if !apiResult.Success || resp.StatusCode() != 200 {
+		fmt.Printf("[DEBUG] Gönderilen Ham JSON: %+v\n", request)
+		fmt.Printf("[DEBUG] Pazarama Hata Yanıtı: %s\n", resp.String())
+	}
 
 	if err != nil {
 		return "", err
@@ -279,6 +285,8 @@ func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string
 }
 
 func WatchBatchStatus(client *resty.Client, token string, batchID string) {
+	fmt.Printf("\n[WATCHER] %s takip ediliyor...\n", batchID)
+
 	for {
 		var result struct {
 			Data struct {
@@ -300,6 +308,7 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string) {
 			Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
 
 		if err != nil {
+			// Hata olsa bile hemen pes etme, bekle ve tekrar dene
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -308,11 +317,12 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string) {
 			status := result.Data.Status
 			failed := result.Data.FailedCount
 
-			if status == 2 { // İşlem bitti
-				if failed > 0 {
-					// --- BURASI HATAYI YAKALAYAN KISIM ---
-					fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s işlendi ama ürün REDDEDİLDİ!\n", batchID)
+			if status == 1 {
+				fmt.Printf("\r[WAIT] Pazarama ürünü işliyor (InProgress)... Batch: %s", batchID)
 
+			} else if status == 2 { // İşlem bitti
+				if failed > 0 {
+					fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s işlendi ama %d ürün REDDEDİLDİ!\n", batchID, failed)
 					fmt.Printf("[DEBUG] API Ham Yanıtı: %s\n", resp.String())
 
 					if len(result.Data.BatchResult) > 0 {
@@ -320,18 +330,18 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string) {
 							fmt.Printf("[REDE NEDENİ] %s\n", res.Reason)
 						}
 					} else {
-						fmt.Println("[REDE NEDENİ] Pazarama detay belirtmedi, panelden 'Hatalı Ürünler' kısmına bakmalısın.")
+						fmt.Println("[REDE NEDENİ] Detay belirtilmedi, panelden kontrol et.")
 					}
-					fmt.Print("Seçiminiz: ")
+					fmt.Print("\nSeçiminiz: ")
 					return
 				}
 
-				// Eğer hata yoksa gerçekten başarılıdır
-				fmt.Printf("\n\n[ARKAPLAN HABERCİ] Batch %s: Onay Alındı! Ürün yayına hazır.\n", batchID)
+				fmt.Printf("\n\n[ARKAPLAN HABERCİ] Batch %s: Başarıyla Pazarama'ya iletildi.\n", batchID)
 				fmt.Print("Seçiminiz: ")
 				return
+
 			} else if status == 3 {
-				fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s sistemi çöktü veya ağır hata aldı.\n", batchID)
+				fmt.Printf("\n\n[ARKAPLAN HATASI] Batch %s ağır hata aldı (Status 3).\n", batchID)
 				fmt.Print("Seçiminiz: ")
 				return
 			}
@@ -369,4 +379,90 @@ func GetCategoryAttributes(client *resty.Client, token string, categoryID string
 	}
 
 	return nil
+}
+
+func AutoMapMandatoryAttributes(client *resty.Client, token string, categoryID string) error {
+	fmt.Printf("\n[LOG] %s kategorisi için zorunlu özellikler analiz ediliyor...\n", categoryID)
+
+	// Daha önce yazdığımız endpoint ve Parametre (Id)
+	resp, err := client.R().
+		SetAuthToken(token).
+		SetQueryParam("Id", categoryID).
+		Get("https://isortagimapi.pazarama.com/category/getCategoryWithAttributes")
+
+	if err != nil {
+		return err
+	}
+
+	// JSON parse için geçici struct
+	var result struct {
+		Data struct {
+			Attributes []struct {
+				ID              string `json:"id"`
+				Name            string `json:"name"`
+				IsRequired      bool   `json:"isRequired"`
+				AttributeValues []struct {
+					ID    string `json:"id"`
+					Value string `json:"value"`
+				} `json:"attributeValues"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return err
+	}
+
+	foundCount := 0
+	for _, attr := range result.Data.Attributes {
+		if attr.IsRequired {
+			if len(attr.AttributeValues) > 0 {
+				// İlk değeri varsayılan seçiyoruz (Örn: Sade, Krom, 1gr vb.)
+				defVal := attr.AttributeValues[0]
+
+				_, err := database.DB.Exec(`
+					INSERT OR REPLACE INTO platform_category_defaults 
+					(platform, category_id, attribute_id, attribute_name, value_id, value_name) 
+					VALUES ('pazarama', ?, ?, ?, ?, ?)`,
+					categoryID, attr.ID, attr.Name, defVal.ID, defVal.Value)
+
+				if err == nil {
+					fmt.Printf("[OK] Zorunlu Alan Eşlendi: %s -> %s\n", attr.Name, defVal.Value)
+					foundCount++
+				}
+			}
+		}
+	}
+
+	if foundCount == 0 {
+		fmt.Println("[INFO] Bu kategoride zorunlu özellik bulunamadı.")
+	} else {
+		fmt.Printf("[OK] Toplam %d zorunlu özellik hafızaya alındı.\n", foundCount)
+	}
+
+	return nil
+}
+
+func GetDefaultAttributesFromDB(categoryID string) []core.PazaramaAttribute {
+
+	attrs := []core.PazaramaAttribute{}
+
+	rows, err := database.DB.Query(`
+		SELECT attribute_id, value_id 
+		FROM platform_category_defaults 
+		WHERE platform = 'pazarama' AND category_id = ?`, categoryID)
+
+	if err != nil {
+		fmt.Printf("[HATA] DB Sorgu Hatası: %v\n", err)
+		return attrs
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var a core.PazaramaAttribute
+		if err := rows.Scan(&a.AttributeId, &a.AttributeValueId); err == nil {
+			attrs = append(attrs, a)
+		}
+	}
+	return attrs
 }

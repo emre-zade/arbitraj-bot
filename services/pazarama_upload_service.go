@@ -142,6 +142,13 @@ func TestRealProductUpload(client *resty.Client, token string, filePath string, 
 		}
 	}
 
+	defaultAttrs := GetDefaultAttributesFromDB(kategoriId)
+
+	fmt.Printf("[LOG] Kategori ID: %s için %d adet attribute DB'den çekildi.\n", kategoriId, len(defaultAttrs))
+	for _, a := range defaultAttrs {
+		fmt.Printf("   -> Attr: %s | Val: %s\n", a.AttributeId, a.AttributeValueId)
+	}
+
 	productRequest := core.PazaramaProductItem{
 		Code:         barkod,
 		Name:         urunAdi,
@@ -158,14 +165,8 @@ func TestRealProductUpload(client *resty.Client, token string, filePath string, 
 		VatRate:      kdv,
 		CategoryId:   kategoriId,
 		Images:       pazaramaImages,
-		Attributes: []core.PazaramaAttribute{
-			{
-				AttributeId:      "08b2020b-e519-405f-85e2-1fd712104097", // Renk Özelliği
-				AttributeValueId: "4cc993c1-ff99-4cfd-96e2-989b8877d386", // Krom Değeri
-			},
-		},
+		Attributes:   defaultAttrs,
 	}
 
-	// CreateProductPazarama'dan gelen batchID'yi yukarı fırlatıyoruz
 	return CreateProductPazarama(client, token, productRequest)
 }
