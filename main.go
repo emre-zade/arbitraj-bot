@@ -43,11 +43,11 @@ func main() {
 		case "1":
 			showPazaramaMenu(client, &cfg, reader)
 		case "2":
-			//showPttMenu(client, &cfg, reader)
+			showPttMenu(client, &cfg, reader)
 		case "3":
-			//showHbMenu(client, &cfg, reader)
+			showHbMenu(client, &cfg, reader)
 		case "4":
-			//showDatabaseMenu(client, &cfg, reader)
+			//showDatabaseMenu(client, &cfg)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
@@ -55,51 +55,10 @@ func main() {
 	}
 }
 
-func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	for {
-		fmt.Println("\n" + strings.Repeat("-", 45))
-		fmt.Println("           PAZARAMA İŞLEMLERİ")
-		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
-		fmt.Println("2- Kategori Listesini Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
-		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
-		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
-		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
-		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
-		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
-		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
-		fmt.Println("0- Ana Menüye Dön")
-		fmt.Print("\nSeçiminiz: ")
-
-		s, _ := reader.ReadString('\n')
-		s = strings.TrimSpace(s)
-
-		token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-
-		switch s {
-		case "1":
-			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
-		case "2":
-			services.SyncPazaramaCategories(client, token)
-		case "3":
-			services.SyncPazaramaBrands(client, token)
-		case "4":
-			fmt.Print("Analiz edilecek Kategori ID: ")
-			var id string
-			fmt.Scanln(&id)
-			services.AutoMapMandatoryAttributes(client, token, id)
-		case "5":
-			handlePazaramaSingleUpload(client, cfg)
-		case "6":
-			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
-		case "7":
-			handlePazaramaCompare()
-		case "8":
-			handlePazaramaMissingUpload(client, cfg)
-		case "0":
-			return
-		}
-	}
+func askInput(prompt string, reader *bufio.Reader) string {
+	fmt.Print(prompt)
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
 }
 
 func runPttExcelUploadOperation(client *resty.Client, cfg *core.Config) {
@@ -432,7 +391,8 @@ func RunSimilarityTest(myCategory string) {
 	}
 }
 
-func handlePazaramaSingleUpload(client *resty.Client, cfg *core.Config) {
+func handlePazaramaSingleUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	// Senin başlığın aynen duruyor
 	fmt.Println("\n[!] Pazarama Tekil Ürün Yükleme İşlemi")
 
 	token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
@@ -442,14 +402,17 @@ func handlePazaramaSingleUpload(client *resty.Client, cfg *core.Config) {
 	}
 
 	filePath := "./storage/pazarama_urun_yukleme.xlsx"
-	var rowIndex int
-	fmt.Print("\n[?] Yüklenecek ürünün Excel satır numarası (Örn: 220): ")
-	fmt.Scanln(&rowIndex)
 
-	// Kullanıcı 220 diyorsa bu index olarak 219'dur (başlık satırı varsa)
+	// Sadece Scanln yerine Reader kullanıyoruz ki "Enter" hatası almayalım
+	fmt.Print("\n[?] Yüklenecek ürünün Excel satır numarası (Örn: 220): ")
+	rowStr, _ := reader.ReadString('\n')
+	rowStr = strings.TrimSpace(rowStr)
+	rowIndex, _ := strconv.Atoi(rowStr)
+
+	// Senin index mantığın
 	actualIndex := rowIndex - 1
 
-	// Yeni isimlendirdiğimiz fonksiyonu çağırıyoruz
+	// Senin fonksiyon çağrın
 	batchID, product, err := services.UploadSingleProductFromExcelPazarama(client, token, filePath, actualIndex)
 
 	if err != nil {
@@ -458,14 +421,14 @@ func handlePazaramaSingleUpload(client *resty.Client, cfg *core.Config) {
 	}
 
 	if batchID != "" {
-		// Anlamlı log çıktısı
+		// Senin anlamlı çıktıların
 		fmt.Printf("[OK] Ürün sıraya alındı: %s (%s)\n", product.Name, product.Code)
 
-		// Takip başlatılıyor
+		// Senin takip mantığın
 		items := []core.PazaramaProductItem{product}
 		go services.WatchBatchStatus(client, token, batchID, items)
 
-		// Watcher'ın ekrana ilk mesajı basması için çok kısa bekleme
+		// Senin bekletme süren
 		time.Sleep(500 * time.Millisecond)
 	} else {
 		fmt.Println("[!] İşlem başarısız: BatchID alınamadı.")
@@ -513,4 +476,107 @@ func handlePazaramaMissingUpload(client *resty.Client, cfg *core.Config) {
 	}
 
 	fmt.Println("[OK] Eksik yükleme talepleri başarıyla iletildi.")
+}
+
+func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           PAZARAMA İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
+		fmt.Println("2- Kategori Listesini Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
+		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
+		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
+		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
+		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
+		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
+		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		s := askInput("\nSeçiminiz: ", reader)
+
+		token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+
+		switch s {
+		case "1":
+			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
+		case "2":
+			services.SyncPazaramaCategories(client, token)
+		case "3":
+			services.SyncPazaramaBrands(client, token)
+		case "4":
+			fmt.Print("Analiz edilecek Kategori ID: ")
+			var id string
+			fmt.Scanln(&id)
+			services.AutoMapMandatoryAttributes(client, token, id)
+		case "5":
+			handlePazaramaSingleUpload(client, cfg, reader)
+		case "6":
+			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
+		case "7":
+			handlePazaramaCompare()
+		case "8":
+			handlePazaramaMissingUpload(client, cfg)
+		case "0":
+			return
+		}
+	}
+}
+
+func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("          HEPSİBURADA İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- SKU Listesini Çek (JSON/Excel) -> **Mağazanızdaki tüm ürünleri detaylarıyla indirir.**")
+		fmt.Println("2- Toplu Fiyat & Stok Güncelle -> **Excel'e göre Hepsiburada fiyatlarını günceller.**")
+		fmt.Println("3- Eksik Ürün Analizi -> **Hepsiburada paneli ile Excel'inizi karşılaştırır.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		// fmt.Scanln yerine reader kullanımı
+		s := askInput("\nSeçiminiz: ", reader)
+
+		switch s {
+		case "1":
+			fmt.Println("[LOG] SKU Listesi çekiliyor...")
+			// services.GetHbInventory(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiKey)
+		case "2":
+			fmt.Println("[LOG] Toplu fiyat/stok güncelleme modülü henüz aktif değil.")
+		case "0":
+			return
+		default:
+			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+}
+
+func showPttMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           PttAVM İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Barkod ile Katalog Sorgula -> **Ürünün PttAVM kataloğunda olup olmadığını kontrol eder.**")
+		fmt.Println("2- Toplu Stok & Fiyat Güncelle -> **Excel listesini PttAVM paneline senkronize eder.**")
+		fmt.Println("3- Tracking ID Sorgula -> **Siparişlerin kargo durumlarını takip eder.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		// Menü seçimi
+		s := askInput("\nSeçiminiz: ", reader)
+
+		switch s {
+		case "1":
+			// Barkod girişi için de reader kullanıyoruz
+			barcode := askInput("Sorgulanacak Barkod: ", reader)
+			if barcode != "" {
+				fmt.Printf("[LOG] %s barkodu sorgulanıyor...\n", barcode)
+				// services.SearchPttCatalog(client, barcode)
+			} else {
+				fmt.Println("[!] Barkod boş olamaz.")
+			}
+		case "0":
+			return
+		default:
+			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
 }
