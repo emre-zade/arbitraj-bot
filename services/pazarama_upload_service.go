@@ -107,8 +107,7 @@ func FillPazaramaCategoryIDs(filePath string) error {
 	return nil
 }
 
-// Dönüş tipini (string, core.PazaramaProductItem, error) yaptık
-func TestRealProductUpload(client *resty.Client, token string, filePath string, rowIndex int) (string, core.PazaramaProductItem, error) {
+func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, filePath string, rowIndex int) (string, core.PazaramaProductItem, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return "", core.PazaramaProductItem{}, fmt.Errorf("Excel dosyası açılamadı: %v", err)

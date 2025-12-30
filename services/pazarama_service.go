@@ -287,12 +287,19 @@ func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string
 }
 
 func WatchBatchStatus(client *resty.Client, token string, batchID string, items []core.PazaramaProductItem) {
-	fmt.Printf("\n[WATCHER] %s takip ediliyor...\n", batchID)
 	startTime := time.Now()
+
+	// Paket özeti hazırlayalım
+	var displayInfo string
+	if len(items) == 1 {
+		displayInfo = fmt.Sprintf("%s (%s)", items[0].Name, items[0].Code)
+	} else {
+		displayInfo = fmt.Sprintf("%d ürünlük paket (Örn: %s)", len(items), items[0].Name)
+	}
 
 	for {
 		if time.Since(startTime) > 15*time.Minute {
-			utils.WriteToLogFile(fmt.Sprintf("[TIMEOUT] Batch %s zaman aşımına uğradı.", batchID))
+			utils.WriteToLogFile(fmt.Sprintf("[TIMEOUT] %s için süre doldu.", displayInfo))
 			return
 		}
 
@@ -308,49 +315,24 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string, items 
 			Success bool `json:"success"`
 		}
 
-		_, err := client.R().
-			SetAuthToken(token).
-			SetQueryParam("BatchRequestId", batchID).
-			SetResult(&result).
-			Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
+		client.R().SetAuthToken(token).SetQueryParam("BatchRequestId", batchID).SetResult(&result).Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
 
-		if err == nil && result.Success {
-			status := result.Data.Status
-
-			if status == 1 {
-				fmt.Printf("\r[WAIT] Pazarama ürünü işliyor... Batch: %s", batchID)
-			} else if status == 2 {
+		if result.Success {
+			if result.Data.Status == 1 {
+				// BATCH ID YERİNE ÜRÜN ADI BASILIYOR
+				fmt.Printf("\r[WAIT] %s işleniyor...", displayInfo)
+			} else if result.Data.Status == 2 {
 				if result.Data.FailedCount > 0 {
-					fmt.Printf("\n[HATA] Batch %s içerisinde %d ürün reddedildi.\n", batchID, result.Data.FailedCount)
-
-					// KRİTİK KISIM: Hataları ürün bazlı eşleştiriyoruz
-					// Pazarama genellikle gönderilen sırayla sonuç döner.
+					fmt.Printf("\n[HATA] %s paketinde %d ürün reddedildi!\n", displayInfo, result.Data.FailedCount)
+					// Hata detayları log dosyasına barkodlu şekilde yazılmaya devam eder
 					for i, res := range result.Data.BatchResult {
-						// Eğer bu indexteki ürün hatalıysa (Reason veya Code doluysa)
-						if res.Reason != "" || res.Code != "0" { // "0" genellikle başarı kodudur
-							var pName, pBarcode string
-							if i < len(items) {
-								pName = items[i].Name
-								pBarcode = items[i].Code
-							} else {
-								pName = "Bilinmeyen Ürün"
-								pBarcode = "Bilinmeyen Barkod"
-							}
-
-							// Boş reason geliyorsa en azından kodu basalım
-							finalReason := res.Reason
-							if finalReason == "" {
-								finalReason = "Pazarama hata açıklaması dönmedi (Hata Kodu: " + res.Code + ")"
-							}
-
-							logMsg := fmt.Sprintf("[RED] Barkod: %s | İsim: %s | Neden: %s", pBarcode, pName, finalReason)
-							utils.WriteToLogFile(logMsg)
-							fmt.Println(logMsg)
+						if res.Reason != "" && i < len(items) {
+							utils.WriteToLogFile(fmt.Sprintf("[RED] %s (%s) -> %s", items[i].Code, items[i].Name, res.Reason))
 						}
 					}
 				} else {
-					fmt.Printf("\n[OK] Batch %s içindeki tüm ürünler onaylandı.\n", batchID)
-					utils.WriteToLogFile(fmt.Sprintf("[SUCCESS] Batch %s başarıyla yüklendi.", batchID))
+					fmt.Printf("\n[OK] %s başarıyla yüklendi ve yayına alındı.\n", displayInfo)
+					utils.WriteToLogFile(fmt.Sprintf("[SUCCESS] %s onaylandı.", displayInfo))
 				}
 				return
 			}

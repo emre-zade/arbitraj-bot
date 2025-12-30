@@ -8,7 +8,6 @@ import (
 	"arbitraj-bot/utils"
 	"bufio"
 	"fmt"
-	"log"
 	"math/rand"
 	"os"
 	"strconv"
@@ -23,33 +22,17 @@ func main() {
 	database.InitDB()
 	utils.InitLogger()
 	client := resty.New()
-	cfg, err := config.LoadConfig("config/config.json")
-	if err != nil {
-		log.Fatalf("[-] Ayar dosyası yüklenemedi: %v", err)
-	}
-
+	cfg, _ := config.LoadConfig("config/config.json")
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Println("\n========================================")
-		fmt.Println("   ARBITRAJ BOT - ANA MENÜ")
-		fmt.Println("========================================")
-		fmt.Println("1- Pazarama Operasyonu")
-		fmt.Println("2- PttAVM Operasyonu")
-		fmt.Println("3- HB Operasyonu")
-		fmt.Println("4- PTT Takip Sorgula (Tracking ID)")
-		fmt.Println("7- Pazarama Kategorilerini çek")
-		fmt.Println("8- Kategori ara (test)")
-		fmt.Println("9- PttAVM Katalog Listesini Al")
-		fmt.Println("10- Pazarama Excel ID Doldur")
-		fmt.Println("11- DB tablosunda ki tüm kategori eşleştirme hafızası sil")
-		fmt.Println("12- Pazarama Tekil Ürün Yükle (Excel)")
-		fmt.Println("13- Pazarama Ürün Markalarını Çek")
-		fmt.Println("14- Pazarama Kategori Özelliklerini Al")
-		fmt.Println("15- Pazarama Kategori Taslağı Oluştur")
-		fmt.Println("16- Pazarama Toplu Ürün Yükle")
-		fmt.Println("17- Pazarama Barkod karşılaştırmasını başlat")
-		fmt.Println("18- Pazarama Eksik ürünleri yükle")
+		fmt.Println("\n" + strings.Repeat("=", 40))
+		fmt.Println("       ARBITRAJ BOT - ANA MENÜ")
+		fmt.Println(strings.Repeat("=", 40))
+		fmt.Println("1- Pazarama İşlemleri")
+		fmt.Println("2- PttAVM İşlemleri")
+		fmt.Println("3- Hepsiburada İşlemleri")
+		fmt.Println("4- Veritabanı ve Genel Ayarlar")
 		fmt.Println("0- Çıkış")
 		fmt.Print("Seçiminiz: ")
 
@@ -58,152 +41,63 @@ func main() {
 
 		switch secim {
 		case "1":
-			runPazaramaOperation(client, &cfg, reader)
+			showPazaramaMenu(client, &cfg, reader)
 		case "2":
-			//runPttOperation(client, &cfg, reader)
-			runPttExcelUploadOperation(client, &cfg)
+			//showPttMenu(client, &cfg, reader)
 		case "3":
-			runHbSitSeedOperation(client, &cfg, reader)
+			//showHbMenu(client, &cfg, reader)
 		case "4":
-			var tid string
-			fmt.Print("\n[?] Sorgulanacak PTT Tracking ID girin: ")
-			fmt.Scanln(&tid)
-			if tid == "" {
-				fmt.Println("[-] Hata: Boş bir ID girdiniz.")
-				continue
-			}
-			fmt.Printf("[*] %s ID'li paket PTT'den sorgulanıyor...\n", tid)
-			services.GetPttTrackingStatus(client, cfg.Ptt.Username, cfg.Ptt.Password, tid)
-		case "7":
-			fmt.Println("[!] Pazarama Kategorileri Senkronize Ediliyor...")
-			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			if err != nil {
-				fmt.Printf("[!] Token alma hatası: %v\n", err)
-				break
-			}
-			err = services.SyncPazaramaCategories(client, token)
-			if err != nil {
-				fmt.Printf("[!] Kategori çekme hatası: %v\n", err)
-			} else {
-				fmt.Println("[+] Pazarama kategorileri başarıyla DB'ye işlendi.")
-			}
-		case "8":
-			// fmt.Scanln yerine bufio kullanarak tüm satırı okuyoruz
-			fmt.Print("[?] Test etmek istediğiniz kategori adını yazın: ")
-			// Okumadan önce buffer'ı temizlemek gerekebilir (önceki Scanln'den kalan \n için)
-			scanner := bufio.NewScanner(os.Stdin)
-			if scanner.Scan() {
-				testCat := scanner.Text()
-				fmt.Printf("[LOG] Arama terimi alındı: '%s'\n", testCat)
-				if testCat != "" {
-					RunSimilarityTest(testCat)
-				} else {
-					fmt.Println("[!] Hata: Boş bir isim girdiniz.")
-				}
-			}
-		case "9":
-			services.ListAllPttCategories(client, cfg.Ptt.Username, cfg.Ptt.Password)
-		case "10":
-			fmt.Println("[!] Pazarama Excel ID Doldurma Başlatılıyor...")
-			filePath := "./storage/pazarama_urun_yukleme.xlsx"
-			err := services.FillPazaramaCategoryIDs(filePath)
-			if err != nil {
-				fmt.Printf("[!] Hata: %v\n", err)
-			}
-		case "11":
-			if core.AskConfirmation("Tüm kategori eşleştirme hafızası silinecek. Emin misin?") {
-				database.ClearCategoryMappings()
-			}
-		case "12":
-			fmt.Println("\n[!] Pazarama Tekil Ürün Yükle (Excel)")
-
-			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			if err != nil {
-				fmt.Printf("[HATA] Token alınamadı: %v\n", err)
-				break
-			}
-
-			filePath := "./storage/pazarama_urun_yukleme.xlsx"
-
-			var rowIndex int
-			fmt.Print("\n[?] Kaçıncı satırdaki ürün yüklenecek?: ")
-			fmt.Scanln(&rowIndex)
-			rowIndex--
-
-			// DEĞİŞİKLİK BURADA: 'product' değişkenini de alıyoruz
-			batchID, product, err := services.TestRealProductUpload(client, token, filePath, rowIndex)
-
-			if err != nil {
-				fmt.Printf("[!] Yükleme başlatılırken hata oluştu: %v\n", err)
-			} else if batchID != "" {
-				fmt.Printf("[OK] Ürün sıraya alındı. Takip başlatılıyor. BatchID: %s\n", batchID)
-
-				// DEĞİŞİKLİK BURADA: Tek ürünü bir slice (liste) içine koyup Watcher'a veriyoruz
-				items := []core.PazaramaProductItem{product}
-				go services.WatchBatchStatus(client, token, batchID, items)
-
-				time.Sleep(500 * time.Millisecond)
-			} else {
-				fmt.Println("[!] BatchID alınamadı, takip yapılamıyor.")
-			}
-
-		case "13":
-			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			err := services.SyncPazaramaBrands(client, token)
-			if err != nil {
-				fmt.Printf("[HATA] Markalar çekilemedi: %v\n", err)
-			}
-
-		case "14":
-			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			var categoryid string
-			fmt.Print("\n[?] Pazarama için kategori id girin: ")
-			fmt.Scanln(&categoryid)
-			services.GetCategoryAttributes(client, token, categoryid)
-
-		case "15":
-			fmt.Print("Analiz edilecek Kategori ID: ")
-			var catID string
-			fmt.Scanln(&catID)
-			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			services.AutoMapMandatoryAttributes(client, token, catID)
-
-		case "16":
-			fmt.Println("\n[!!!] DİKKAT: Pazarama'ya yüklenmek üzere! Başlıyoruz...")
-			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			filePath := "./storage/supradyn.xlsx"
-
-			err := services.BulkUploadPazarama(client, token, filePath)
-			if err != nil {
-				fmt.Printf("[KRİTİK HATA] Bulk yükleme başlatılamadı: %v\n", err)
-			}
-
-		case "17":
-			fmt.Println("\n[COMPARER] Barkod karşılaştırma başlatılıyor...")
-			origFile := "./storage/pazarama_urun_yukleme.xlsx"
-			panelFile := "./storage/Ürünleriniz-30.12.25-16.28.xlsx" // Panelden indirdiğin dosya
-
-			_, err := utils.CompareExcelBarcodes(origFile, panelFile)
-			if err != nil {
-				fmt.Printf("[HATA] Karşılaştırma başarısız: %v\n", err)
-			}
-
-		case "18":
-			fmt.Println("\n[RETRY] Eksik ürünlerin yükleme operasyonu başlatılıyor...")
-			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-			origFile := "./storage/pazarama_urun_yukleme.xlsx"
-			missFile := "./storage/eksik_urunler.xlsx" // Karşılaştırma aracının oluşturduğu dosya
-
-			err := services.UploadMissingProductsPazarama(client, token, origFile, missFile)
-			if err != nil {
-				fmt.Printf("[HATA] Yeniden yükleme başarısız: %v\n", err)
-			}
-
+			//showDatabaseMenu(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
-		default:
-			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+}
+
+func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           PAZARAMA İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
+		fmt.Println("2- Kategori Listesini Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
+		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
+		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
+		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
+		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
+		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
+		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
+		fmt.Println("0- Ana Menüye Dön")
+		fmt.Print("\nSeçiminiz: ")
+
+		s, _ := reader.ReadString('\n')
+		s = strings.TrimSpace(s)
+
+		token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+
+		switch s {
+		case "1":
+			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
+		case "2":
+			services.SyncPazaramaCategories(client, token)
+		case "3":
+			services.SyncPazaramaBrands(client, token)
+		case "4":
+			fmt.Print("Analiz edilecek Kategori ID: ")
+			var id string
+			fmt.Scanln(&id)
+			services.AutoMapMandatoryAttributes(client, token, id)
+		case "5":
+			handlePazaramaSingleUpload(client, cfg)
+		case "6":
+			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
+		case "7":
+			handlePazaramaCompare()
+		case "8":
+			handlePazaramaMissingUpload(client, cfg)
+		case "0":
+			return
 		}
 	}
 }
@@ -536,4 +430,87 @@ func RunSimilarityTest(myCategory string) {
 		}
 		fmt.Println("-------------------------------------------")
 	}
+}
+
+func handlePazaramaSingleUpload(client *resty.Client, cfg *core.Config) {
+	fmt.Println("\n[!] Pazarama Tekil Ürün Yükleme İşlemi")
+
+	token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+	if err != nil {
+		fmt.Printf("[HATA] Token alınamadı: %v\n", err)
+		return
+	}
+
+	filePath := "./storage/pazarama_urun_yukleme.xlsx"
+	var rowIndex int
+	fmt.Print("\n[?] Yüklenecek ürünün Excel satır numarası (Örn: 220): ")
+	fmt.Scanln(&rowIndex)
+
+	// Kullanıcı 220 diyorsa bu index olarak 219'dur (başlık satırı varsa)
+	actualIndex := rowIndex - 1
+
+	// Yeni isimlendirdiğimiz fonksiyonu çağırıyoruz
+	batchID, product, err := services.UploadSingleProductFromExcelPazarama(client, token, filePath, actualIndex)
+
+	if err != nil {
+		fmt.Printf("[!] Yükleme başlatılırken hata oluştu: %v\n", err)
+		return
+	}
+
+	if batchID != "" {
+		// Anlamlı log çıktısı
+		fmt.Printf("[OK] Ürün sıraya alındı: %s (%s)\n", product.Name, product.Code)
+
+		// Takip başlatılıyor
+		items := []core.PazaramaProductItem{product}
+		go services.WatchBatchStatus(client, token, batchID, items)
+
+		// Watcher'ın ekrana ilk mesajı basması için çok kısa bekleme
+		time.Sleep(500 * time.Millisecond)
+	} else {
+		fmt.Println("[!] İşlem başarısız: BatchID alınamadı.")
+	}
+}
+
+func handlePazaramaCompare() {
+	fmt.Println("\n" + strings.Repeat("-", 20))
+	fmt.Println("[COMPARER] Barkod Karşılaştırma Başlatılıyor...")
+
+	origFile := "./storage/pazarama_urun_yukleme.xlsx"
+	panelFile := "./storage/Ürünleriniz-30.12.25-16.28.xlsx" // Bu isim panelden indikçe güncellenebilir
+
+	missingList, err := utils.CompareExcelBarcodes(origFile, panelFile)
+	if err != nil {
+		fmt.Printf("[HATA] Karşılaştırma işlemi başarısız: %v\n", err)
+		return
+	}
+
+	if len(missingList) > 0 {
+		fmt.Printf("[OK] İşlem tamamlandı. Toplam %d ürün panelde eksik.\n", len(missingList))
+		fmt.Println("[INFO] Eksikler './storage/eksik_urunler.xlsx' dosyasına kaydedildi.")
+	} else {
+		fmt.Println("[OK] Harika! Eksik ürün bulunamadı, tüm ürünler panelde mevcut.")
+	}
+}
+
+func handlePazaramaMissingUpload(client *resty.Client, cfg *core.Config) {
+	fmt.Println("\n" + strings.Repeat("-", 20))
+	fmt.Println("[RETRY] Eksik Ürünlerin Yükleme Operasyonu Başlatılıyor...")
+
+	token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+	if err != nil {
+		fmt.Printf("[HATA] Token alınamadı, işlem durduruldu: %v\n", err)
+		return
+	}
+
+	origFile := "./storage/pazarama_urun_yukleme.xlsx"
+	missFile := "./storage/eksik_urunler.xlsx"
+
+	err = services.UploadMissingProductsPazarama(client, token, origFile, missFile)
+	if err != nil {
+		fmt.Printf("[HATA] Yeniden yükleme operasyonu sırasında hata: %v\n", err)
+		return
+	}
+
+	fmt.Println("[OK] Eksik yükleme talepleri başarıyla iletildi.")
 }
