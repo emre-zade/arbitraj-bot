@@ -190,19 +190,21 @@ type PazaramaBrand struct {
 	Name string `json:"name"`
 }
 
-// HBProduct: Hepsiburada API'sinden gelen canlı veriler için
+type HBListingResponse struct {
+	Listings   []HBProduct `json:"listings"`
+	TotalCount int         `json:"totalCount"`
+}
+
 type HBProduct struct {
+	ListingId      string  `json:"listingId"`
 	HepsiburadaSku string  `json:"hepsiburadaSku"`
 	MerchantSku    string  `json:"merchantSku"`
 	Price          float64 `json:"price"`
 	AvailableStock int     `json:"availableStock"`
+	ProductId      string  `json:"productId"`
 	IsSalable      bool    `json:"isSalable"`
-	ImageURL       string  `json:"imgURL"`
-}
 
-type HBListingResponse struct {
-	Listings   []HBProduct `json:"listings"`
-	TotalCount int         `json:"totalCount"`
-	Limit      int         `json:"limit"`
-	Offset     int         `json:"offset"`
+	// Bunları biz manuel dolduracağız
+	ProductName string   `json:"-"`
+	Images      []string `json:"-"`
 }

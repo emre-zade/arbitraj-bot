@@ -309,7 +309,7 @@ func runPazaramaOperation(client *resty.Client, cfg *core.Config, reader *bufio.
 func runHbSitSeedOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 	fmt.Println("\n[*] Hepsiburada SIT Paneli 'Altın Excel' verileriyle güncelleniyor...")
 
-	hbProducts, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
+	hbProducts, err := services.FetchHBProducts(client, cfg)
 	if err != nil {
 		fmt.Printf("[-] Ürünler çekilemedi: %v\n", err)
 		return
@@ -539,6 +539,7 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		switch s {
 		case "1":
 			handleHbFetchProducts(client, cfg)
+			services.FetchHBProductsWithDetails(client, cfg)
 		case "2":
 			handleHbUpdatePriceStock(client, cfg, reader)
 		case "3":
@@ -552,36 +553,32 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 }
 
 func handleHbFetchProducts(client *resty.Client, cfg *core.Config) {
-	fmt.Println("[LOG] Hepsiburada envanteri çekiliyor...")
-	products, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
+	fmt.Println("\n[LOG] Hepsiburada ürünleri ve görselleri senkronize ediliyor...")
+	products, err := services.FetchHBProducts(client, cfg)
 
 	if err != nil {
-		fmt.Printf("[HATA] Liste çekilemedi: %v\n", err)
+		fmt.Printf("[HATA] %v\n", err)
 		return
 	}
 
-	if len(products) == 0 {
-		fmt.Println("[!] Mağazada listelenecek ürün bulunamadı.")
-		return
-	}
-
-	fmt.Printf("\n%-20s %-20s %-10s %-10s %-10s %-20s\n", "HB SKU", "Satıcı SKU", "Fiyat", "Stok", "Satışta?", "Görsel Linkleri")
-	fmt.Println(strings.Repeat("-", 75))
+	fmt.Printf("\n%-25s %-15s %-10s %-10s %-15s\n", "ÜRÜN ADI", "HB SKU", "FİYAT", "STOK", "GÖRSEL DURUMU")
+	fmt.Println(strings.Repeat("-", 85))
 
 	for _, p := range products {
-		status := "EVET"
-		if !p.IsSalable {
-			status = "HAYIR"
+		imgInfo := "Görsel Yok"
+		if len(p.Images) > 0 {
+			imgInfo = fmt.Sprintf("%d Adet Görsel", len(p.Images))
 		}
-		fmt.Printf("%-20s %-20s %-10.2f %-10d %-10s %-20s\n",
-			p.HepsiburadaSku,
-			p.MerchantSku,
-			p.Price,
-			p.AvailableStock,
-			status,
-			p.ImageURL)
+
+		fmt.Printf("%-25.25s %-15s %-10.2f %-10d %-15s\n",
+			p.ProductName, p.HepsiburadaSku, p.Price, p.AvailableStock, imgInfo)
+
+		// İlk görseli konsola yazdır (Olay akışını sevdiğin için)
+		if len(p.Images) > 0 {
+			fmt.Printf("   [İMG] -> %s\n", p.Images[0])
+		}
 	}
-	fmt.Printf("\n[OK] Toplam %d ürün listelendi.\n", len(products))
+	fmt.Printf("\n[OK] %d ürün başarıyla işlendi.\n", len(products))
 }
 
 func handleHbUpdatePriceStock(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {

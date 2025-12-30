@@ -180,7 +180,7 @@ func ExportHBProductsToExcel(products []core.HBProduct, fileName string) error {
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), p.MerchantSku)
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), p.Price)
 		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), p.AvailableStock)
-		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), p.ImageURL)
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), p)
 	}
 
 	if err := f.SaveAs(fileName); err != nil {
