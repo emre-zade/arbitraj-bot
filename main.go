@@ -123,7 +123,7 @@ func main() {
 			filePath := "./storage/pazarama_urun_yukleme.xlsx"
 
 			var rowIndex int
-			fmt.Print("\n[?] Hangi satırdaki ürün yüklenecek?: ")
+			fmt.Print("\n[?] Kaçıncı satırdaki ürün yüklenecek?: ")
 			fmt.Scanln(&rowIndex)
 			rowIndex--
 
