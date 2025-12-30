@@ -208,3 +208,42 @@ type HBProduct struct {
 	ProductName string   `json:"-"`
 	Images      []string `json:"-"`
 }
+
+type HBCategory struct {
+	CategoryID       int    `json:"categoryId"`
+	Name             string `json:"name"`
+	ParentCategoryId int    `json:"parentCategoryId"`
+	Leaf             bool   `json:"leaf"`
+	Status           string `json:"status"`
+	Available        bool   `json:"available"`
+}
+
+type HBAttribute struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Mandatory bool   `json:"mandatory"`
+	Type      string `json:"type"` // Enum veya String
+}
+
+type HBAttributeValue struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+type HBImportProduct struct {
+	Merchant   string                 `json:"merchant"`
+	CategoryID int                    `json:"categoryId"`
+	Attributes map[string]interface{} `json:"attributes"`
+}
+
+type ExcelProduct struct {
+	Title       string
+	Barcode     string
+	Brand       string
+	Price       float64
+	VatRate     int
+	Stock       int
+	SKU         string
+	Description string
+	MainImage   string
+}

@@ -531,7 +531,11 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		fmt.Println("1- Mağaza Ürünlerini Listele -> **Mevcut SKU, Stok ve Fiyat bilgilerini çeker.**")
 		fmt.Println("2- Tekil Fiyat & Stok Güncelle -> **SKU bazlı anlık güncelleme yapar.**")
 		fmt.Println("3- Ürün İsmi Güncelle (Ticket) -> **Ürün başlığını değiştirmek için talep açar.**")
-		fmt.Println("4- Yeni Ürün Oluşturma (Hazırlık) -> **Henüz aktif değil.**")
+		fmt.Println("4- Kategorileri DB ile Senkronize Et -> **Bütün kategorileri çekip DB dosyasına yazar.**")
+		fmt.Println("5- Kategori Ara ve Özellik Analizi -> **Aranan kategori isminin zorunluğu özelliği varsa ekrana yazdırır.**")
+		fmt.Println("6- Excel ile Toplu Ürün Yükle -> **TEST**")
+		fmt.Println("7- Tracking ID ile ürün durumu sorgula -> **Ürün yüklendikten sonra API'den dönen tracking id ile sorgulama yapılabilir.**")
+		fmt.Println("8- Excel ile toplu ürün yükle -> **./storage/urun_listesi.xlsx dosyasındaki ürünleri hepsiburada'ya yeni ürün olarak talep açar.**")
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
@@ -544,10 +548,184 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 			handleHbUpdatePriceStock(client, cfg, reader)
 		case "3":
 			handleHbUpdateName(client, cfg, reader)
+		case "4":
+			err := services.SyncHBCategories(client, cfg)
+			if err != nil {
+				fmt.Printf("[HATA] Senkronizasyon hatası: %v\n", err)
+			}
+		case "5":
+			handleHbCategorySearchAndAnalysis(client, cfg, reader)
+		case "6":
+			handleHbExcelUpload(client, cfg, reader)
+		case "7":
+			myReader := bufio.NewReader(os.Stdin)
+			tid := askInput("\nTracking ID giriniz:", myReader)
+			services.CheckHBImportStatus(client, cfg, tid)
+		case "8":
+			handleHbBulkExcelUpload(client, cfg, reader)
 		case "0":
 			return
 		default:
 			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+}
+
+func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	fmt.Println("\n[LOG] Excel dosyası toplu işlem için okunuyor...")
+
+	// Excel'den tüm ürünleri alıyoruz
+	excelProducts, err := utils.ReadProductsFromExcel("./storage/urun_listesi.xlsx")
+	if err != nil {
+		fmt.Printf("[HATA] Excel okunamadı: %v\n", err)
+		return
+	}
+
+	var hbList []core.HBImportProduct
+
+	for _, p := range excelProducts {
+		// Her Excel satırı için bir HB objesi oluşturuyoruz
+		item := core.HBImportProduct{
+			Merchant:   cfg.Hepsiburada.MerchantID, // Senin bulduğun o sihirli anahtar!
+			CategoryID: 24003326,
+			Attributes: map[string]interface{}{
+				"merchantSku":    p.SKU,
+				"UrunAdi":        p.Title,
+				"UrunAciklamasi": p.Description,
+				"Barcode":        p.Barcode,
+				"Marka":          p.Brand, //strings.ToUpper(p.Brand)
+				"GarantiSuresi":  24,
+				"tax_vat_rate":   p.VatRate,
+				"kg":             "1",
+				"Image1":         p.MainImage,
+				"00000MU":        p.MainImage,
+				"price":          p.Price, // Formatlanmış fiyat
+				"stock":          p.Stock, // Tam sayı stok
+			},
+		}
+		hbList = append(hbList, item)
+	}
+
+	// Tek seferde fırlat!
+	trackingId, err := services.UploadHBProductsBulk(client, cfg, hbList)
+	if err != nil {
+		fmt.Printf("[HATA] Toplu yükleme başarısız: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n[BAŞARI] %d ürün başarıyla sıraya alındı!\n", len(hbList))
+	fmt.Printf("[TAKİP] Tracking ID: %s\n", trackingId)
+	fmt.Println("[NOT] Birkaç dakika sonra bu ID ile durum sorgulayabilirsiniz.")
+}
+
+func handleHbExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	fmt.Println("\n[LOG] Excel dosyası analiz ediliyor...")
+
+	// Pazarama Excel yolunu kullanıyoruz
+	products, err := utils.ReadProductsFromExcel("./storage/urun_listesi.xlsx")
+	if err != nil {
+		fmt.Printf("[HATA] Excel okunamadı: %v\n", err)
+		return
+	}
+
+	if len(products) == 0 {
+		fmt.Println("[!] Gönderilecek ürün bulunamadı.")
+		return
+	}
+
+	// Test amaçlı ilk ürünü alalım
+	p := products[0]
+	fmt.Printf("[LOG] Hazırlanan Ürün: %s (%s)\n", p.Title, p.Barcode)
+
+	hbProduct := core.HBImportProduct{
+		Merchant:   cfg.Hepsiburada.MerchantID,
+		CategoryID: 24003326,
+		Attributes: map[string]interface{}{
+			"merchantSku":    p.SKU,
+			"UrunAdi":        p.Title,
+			"UrunAciklamasi": p.Description,
+			"Barcode":        p.Barcode,
+			"Marka":          p.Brand,
+			"GarantiSuresi":  24,
+			"tax_vat_rate":   "20",
+			"kg":             "1",
+			"Image1":         p.MainImage,
+			"00000MU":        p.MainImage, // Zorunlu Paket Görseli
+		},
+	}
+
+	// Servisi çağırıp fırlatıyoruz
+	err = services.UploadHBProduct(client, cfg, hbProduct)
+	if err != nil {
+		fmt.Printf("[HATA] HB Import başarısız: %v\n", err)
+	}
+}
+
+func handleHbCategorySearchAndAnalysis(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	keyword := askInput("\nAramak istediğiniz kategori (Örn: vitamin): ", reader)
+
+	fmt.Println("[LOG] Yerel veritabanı taranıyor...")
+	found, err := database.SearchPlatformCategory("hb", keyword)
+	if err != nil {
+		fmt.Printf("[HATA] Arama yapılamadı: %v\n", err)
+		return
+	}
+
+	if len(found) == 0 {
+		fmt.Println("[!] Eşleşen kategori bulunamadı. Lütfen önce (4) ile senkronize edin.")
+		return
+	}
+
+	fmt.Println("\nBulunan Kategoriler:")
+	for i, c := range found {
+		fmt.Printf("%d- %s (ID: %d)\n", i+1, c.Name, c.CategoryID)
+	}
+
+	selStr := askInput("\nAnaliz etmek istediğiniz numara: ", reader)
+	selIdx, _ := strconv.Atoi(selStr)
+
+	if selIdx > 0 && selIdx <= len(found) {
+		selectedCat := found[selIdx-1]
+		catIDStr := strconv.Itoa(selectedCat.CategoryID)
+
+		fmt.Printf("\n[ANALİZ] %s için zorunlu özellikler:\n", selectedCat.Name)
+		attrs, err := services.GetHBCategoryAttributes(client, cfg, catIDStr)
+		if err != nil {
+			fmt.Printf("[HATA] Özellikler çekilemedi: %v\n", err)
+			return
+		}
+
+		fmt.Printf("%-25s %-10s %-10s\n", "ÖZELLİK ADI", "ZORUNLU", "TİP")
+		fmt.Println(strings.Repeat("-", 50))
+		for _, a := range attrs {
+			mandatory := ""
+			if a.Mandatory {
+				mandatory = "EVET [!]"
+			}
+
+			highlight := ""
+			if strings.Contains(strings.ToLower(a.Name), "Aroma") || strings.Contains(strings.ToLower(a.Name), "içerik") {
+				highlight = " <--"
+			}
+
+			fmt.Printf("%-25s %-10s %-10s %-10s \n", a.Name, mandatory, a.Type, highlight)
+		}
+	}
+}
+
+func handleHbCategoryAnalysis(client *resty.Client, cfg *core.Config, catID string) {
+	fmt.Printf("\n[ANALİZ] Kategori %s için zorunlu özellikler taranıyor...\n", catID)
+	attrs, err := services.GetHBCategoryAttributes(client, cfg, catID)
+	if err != nil {
+		fmt.Printf("[HATA] %v\n", err)
+		return
+	}
+
+	fmt.Printf("%-20s %-10s %-10s\n", "ÖZELLİK ADI", "ZORUNLU?", "TİP")
+	fmt.Println(strings.Repeat("-", 45))
+	for _, a := range attrs {
+		if a.Mandatory {
+			fmt.Printf("%-20s %-10s %-10s\n", a.Name, "EVET [!]", a.Type)
 		}
 	}
 }

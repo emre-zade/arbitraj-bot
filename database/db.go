@@ -1,10 +1,12 @@
 package database
 
 import (
+	"arbitraj-bot/core"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -121,6 +123,59 @@ func SaveHbProduct(sku, barcode, productName string, stock int, price float64) {
 	if err != nil {
 		log.Printf("[-] DB Kayıt Hatası (SKU: %s): %v", sku, err)
 	}
+}
+
+// database/db.go
+
+// SavePlatformCategories: HB'den gelen kategorileri senin 'platform_categories' tablosuna yazar
+func SavePlatformCategories(platform string, categories []core.HBCategory) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	// Senin tablonun kolonlarına göre INSERT
+	stmt, _ := tx.Prepare(`
+		INSERT OR REPLACE INTO platform_categories 
+		(platform, category_id, category_name, parent_id, is_leaf) 
+		VALUES (?, ?, ?, ?, ?)
+	`)
+
+	for _, c := range categories {
+		// ParentID'yi string'e çeviriyoruz (Tablonda TEXT olduğu için)
+		parentID := strconv.Itoa(c.ParentCategoryId)
+		catID := strconv.Itoa(c.CategoryID)
+
+		fmt.Printf("[DB-LOG] İşleniyor: %s (ID: %s, Parent: %s)\n", c.Name, catID, parentID)
+
+		_, err = stmt.Exec(platform, catID, c.Name, parentID, c.Leaf)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func SearchPlatformCategory(platform, keyword string) ([]core.HBCategory, error) {
+	query := `SELECT category_id, category_name FROM platform_categories 
+	          WHERE platform = ? AND category_name LIKE ? AND is_leaf = 1`
+
+	rows, err := DB.Query(query, platform, "%"+keyword+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []core.HBCategory
+	for rows.Next() {
+		var c core.HBCategory
+		var idStr string
+		rows.Scan(&idStr, &c.Name)
+		c.CategoryID, _ = strconv.Atoi(idStr)
+		results = append(results, c)
+	}
+	return results, nil
 }
 
 func InitPttCategoryTable() {

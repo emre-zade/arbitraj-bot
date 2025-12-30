@@ -10,8 +10,8 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-const ExcelPath = "storage/Pazarama_Urun_Listesi.xlsx"
-const PttExcelPath = "storage/PttAVM_Urun_Listesi.xlsx"
+const ExcelPath = "./torage/Pazarama_Urun_Listesi.xlsx"
+const PttExcelPath = "./storage/PttAVM_Urun_Listesi.xlsx"
 
 func SaveToExcel(products []core.PazaramaProduct) error {
 	f := excelize.NewFile()
@@ -187,4 +187,43 @@ func ExportHBProductsToExcel(products []core.HBProduct, fileName string) error {
 		return err
 	}
 	return nil
+}
+
+func ReadProductsFromExcel(path string) ([]core.ExcelProduct, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Pazarama listesindeki sayfa adını kullanıyoruz
+	rows, err := f.GetRows("Ürün Listesi")
+	if err != nil {
+		return nil, err
+	}
+
+	var products []core.ExcelProduct
+	for i, row := range rows {
+		// Başlık satırını atla ve boş satırları kontrol et
+		if i == 0 || len(row) < 3 {
+			continue
+		}
+
+		// Fiyat ve stok dönüşümleri
+		priceStr := strings.ReplaceAll(row[2], ",", ".")
+		price, _ := strconv.ParseFloat(priceStr, 64)
+
+		products = append(products, core.ExcelProduct{
+			Title:       row[1],
+			Barcode:     row[0],
+			SKU:         row[0], // Barkod'u SKU olarak kullanıyoruz
+			Brand:       row[6],
+			Price:       price,
+			VatRate:     1,
+			Stock:       25,
+			Description: row[9],
+			MainImage:   row[10],
+		})
+	}
+	return products, nil
 }
