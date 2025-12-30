@@ -335,16 +335,16 @@ func runHbSitSeedOperation(client *resty.Client, cfg *core.Config, reader *bufio
 		randomStock := rand.Intn(100) + 10
 
 		// Önce Fiyat ve Stok Güncelle
-		errPrice := services.UpdateHBPriceStock(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.SKU, randomPrice, randomStock)
+		errPrice := services.UpdateHBPriceStock(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.HepsiburadaSku, randomPrice, randomStock)
 
 		// Sonra İsim Güncelle (Hata verse de devam etsin diye errPrice kontrolü yapıyoruz)
-		_ = services.UpdateHBProductName(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.SKU, cleanTitle)
+		_ = services.UpdateHBProductName(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, hb.HepsiburadaSku, cleanTitle)
 
 		if errPrice == nil {
-			database.SaveHbProduct(hb.SKU, hb.Barcode, cleanTitle, randomStock, randomPrice)
-			fmt.Printf(" [+] %s -> Başarıyla güncellendi: %.2f TL\n", hb.SKU, randomPrice)
+			database.SaveHbProduct(hb.HepsiburadaSku, hb.MerchantSku, cleanTitle, randomStock, randomPrice)
+			fmt.Printf(" [+] %s -> Başarıyla güncellendi: %.2f TL\n", hb.HepsiburadaSku, randomPrice)
 		} else {
-			fmt.Printf(" [!] %s Hatası: %v\n", hb.SKU, errPrice)
+			fmt.Printf(" [!] %s Hatası: %v\n", hb.HepsiburadaSku, errPrice)
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
@@ -528,25 +528,87 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		fmt.Println("\n" + strings.Repeat("-", 45))
 		fmt.Println("          HEPSİBURADA İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- SKU Listesini Çek (JSON/Excel) -> **Mağazanızdaki tüm ürünleri detaylarıyla indirir.**")
-		fmt.Println("2- Toplu Fiyat & Stok Güncelle -> **Excel'e göre Hepsiburada fiyatlarını günceller.**")
-		fmt.Println("3- Eksik Ürün Analizi -> **Hepsiburada paneli ile Excel'inizi karşılaştırır.**")
+		fmt.Println("1- Mağaza Ürünlerini Listele -> **Mevcut SKU, Stok ve Fiyat bilgilerini çeker.**")
+		fmt.Println("2- Tekil Fiyat & Stok Güncelle -> **SKU bazlı anlık güncelleme yapar.**")
+		fmt.Println("3- Ürün İsmi Güncelle (Ticket) -> **Ürün başlığını değiştirmek için talep açar.**")
+		fmt.Println("4- Yeni Ürün Oluşturma (Hazırlık) -> **Henüz aktif değil.**")
 		fmt.Println("0- Ana Menüye Dön")
 
-		// fmt.Scanln yerine reader kullanımı
 		s := askInput("\nSeçiminiz: ", reader)
 
 		switch s {
 		case "1":
-			fmt.Println("[LOG] SKU Listesi çekiliyor...")
-			// services.GetHbInventory(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiKey)
+			handleHbFetchProducts(client, cfg)
 		case "2":
-			fmt.Println("[LOG] Toplu fiyat/stok güncelleme modülü henüz aktif değil.")
+			handleHbUpdatePriceStock(client, cfg, reader)
+		case "3":
+			handleHbUpdateName(client, cfg, reader)
 		case "0":
 			return
 		default:
 			fmt.Println("[!] Geçersiz seçim.")
 		}
+	}
+}
+
+func handleHbFetchProducts(client *resty.Client, cfg *core.Config) {
+	fmt.Println("[LOG] Hepsiburada envanteri çekiliyor...")
+	products, err := services.FetchHBProducts(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret)
+
+	if err != nil {
+		fmt.Printf("[HATA] Liste çekilemedi: %v\n", err)
+		return
+	}
+
+	if len(products) == 0 {
+		fmt.Println("[!] Mağazada listelenecek ürün bulunamadı.")
+		return
+	}
+
+	fmt.Printf("\n%-20s %-20s %-10s %-10s %-10s %-20s\n", "HB SKU", "Satıcı SKU", "Fiyat", "Stok", "Satışta?", "Görsel Linkleri")
+	fmt.Println(strings.Repeat("-", 75))
+
+	for _, p := range products {
+		status := "EVET"
+		if !p.IsSalable {
+			status = "HAYIR"
+		}
+		fmt.Printf("%-20s %-20s %-10.2f %-10d %-10s %-20s\n",
+			p.HepsiburadaSku,
+			p.MerchantSku,
+			p.Price,
+			p.AvailableStock,
+			status,
+			p.ImageURL)
+	}
+	fmt.Printf("\n[OK] Toplam %d ürün listelendi.\n", len(products))
+}
+
+func handleHbUpdatePriceStock(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	sku := askInput("Güncellenecek SKU: ", reader)
+	fiyatStr := askInput("Yeni Fiyat: ", reader)
+	stokStr := askInput("Yeni Stok: ", reader)
+
+	fiyat := utils.StringToFloat(fiyatStr)
+	stok := utils.StringToInt(stokStr)
+
+	err := services.UpdateHBPriceStock(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, sku, fiyat, stok)
+	if err != nil {
+		fmt.Printf("[HATA] Güncelleme başarısız: %v\n", err)
+	} else {
+		fmt.Printf("[OK] %s SKU'su için Fiyat: %.2f, Stok: %d olarak güncellendi.\n", sku, fiyat, stok)
+	}
+}
+
+func handleHbUpdateName(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	sku := askInput("İsmi değiştirilecek SKU: ", reader)
+	yeniIsim := askInput("Yeni Ürün Adı: ", reader)
+
+	err := services.UpdateHBProductName(client, cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret, sku, yeniIsim)
+	if err != nil {
+		fmt.Printf("[HATA] İsim güncelleme talebi başarısız: %v\n", err)
+	} else {
+		fmt.Printf("[OK] %s için isim değiştirme talebi (Ticket) başarıyla açıldı.\n", sku)
 	}
 }
 

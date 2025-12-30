@@ -10,8 +10,8 @@ type PazaramaConfig struct {
 
 type HepsiburadaConfig struct {
 	MerchantID string `json:"merchant_id"`
-	ApiKey     string `json:"api_key"`
 	ApiSecret  string `json:"api_secret"`
+	UserAgent  string `json:"user_agent"`
 }
 
 type PttConfig struct {
@@ -104,15 +104,6 @@ type PttLoginResponse struct {
 	IsSuccess bool `json:"isSuccess"`
 }
 
-// HBProduct: Hepsiburada API'sinden gelen canlı veriler için
-type HBProduct struct {
-	SKU      string
-	Barcode  string
-	Price    float64
-	Stock    int
-	ImageURL string
-}
-
 // MasterProduct: Excel'den yükleyeceğimiz temiz veriler için
 type MasterProduct struct {
 	SKU         string
@@ -197,4 +188,21 @@ type PazaramaBrandResponse struct {
 type PazaramaBrand struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// HBProduct: Hepsiburada API'sinden gelen canlı veriler için
+type HBProduct struct {
+	HepsiburadaSku string  `json:"hepsiburadaSku"`
+	MerchantSku    string  `json:"merchantSku"`
+	Price          float64 `json:"price"`
+	AvailableStock int     `json:"availableStock"`
+	IsSalable      bool    `json:"isSalable"`
+	ImageURL       string  `json:"imgURL"`
+}
+
+type HBListingResponse struct {
+	Listings   []HBProduct `json:"listings"`
+	TotalCount int         `json:"totalCount"`
+	Limit      int         `json:"limit"`
+	Offset     int         `json:"offset"`
 }

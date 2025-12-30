@@ -176,10 +176,10 @@ func ExportHBProductsToExcel(products []core.HBProduct, fileName string) error {
 	// Veriler
 	for i, p := range products {
 		row := i + 2
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), p.SKU)
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), p.Barcode)
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), p.HepsiburadaSku)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), p.MerchantSku)
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), p.Price)
-		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), p.Stock)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), p.AvailableStock)
 		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), p.ImageURL)
 	}
 

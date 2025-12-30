@@ -7,91 +7,72 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/go-resty/resty/v2"
 )
 
-// FetchHBProducts: Mağazadaki (SIT) mevcut ürünleri listeler.
-// Bu fonksiyon olmadan hangi SKU'ları güncelleyeceğimizi bilemeyiz.
-func FetchHBProducts(client *resty.Client, merchantID string, secretKey string) ([]core.HBProduct, error) {
-	var allProducts []core.HBProduct
-	// SIT Listeleme Endpoint'i (GET)
-	baseURL := "https://listing-external-sit.hepsiburada.com/listings/merchantid"
-	fullURL := fmt.Sprintf("%s/%s?offset=0&limit=100", baseURL, merchantID)
+func FetchHBProducts(client *resty.Client, merchantID string, apiKey string) ([]core.HBProduct, error) {
+	url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s", merchantID)
+
+	// Veriyi zarf yapısına alıyoruz
+	var apiResponse core.HBListingResponse
 
 	resp, err := client.R().
 		SetHeader("accept", "application/json").
 		SetHeader("User-Agent", "solidmarket_dev").
-		SetBasicAuth(merchantID, secretKey).
-		Get(fullURL)
+		SetQueryParam("offset", "0").
+		SetQueryParam("limit", "10").
+		SetBasicAuth(merchantID, apiKey).
+		SetResult(&apiResponse). // Zarf yapısına parse et
+		Get(url)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Bağlantı hatası: %v", err)
 	}
 
-	if resp.IsError() {
-		return nil, fmt.Errorf("HB Liste Çekme Hatası (%d): %s", resp.StatusCode(), resp.String())
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("HB SIT Liste Hatası (%d): %s", resp.StatusCode(), resp.String())
 	}
 
-	var result struct {
-		Listings []struct {
-			MerchantSku    string  `json:"merchantSku"`
-			Barcode        string  `json:"barcode"`
-			Price          float64 `json:"price"`
-			AvailableStock int     `json:"availableStock"`
-		} `json:"listings"`
-	}
-
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, err
-	}
-
-	for _, item := range result.Listings {
-		allProducts = append(allProducts, core.HBProduct{
-			SKU:     item.MerchantSku,
-			Barcode: item.Barcode,
-			Price:   item.Price,
-			Stock:   item.AvailableStock,
-		})
-	}
-	return allProducts, nil
+	// Sadece listings içindeki ürün listesini dönüyoruz
+	return apiResponse.Listings, nil
 }
 
-// UpdateHBPriceStock: Listing API üzerinden fiyat ve stok günceller.
-func UpdateHBPriceStock(client *resty.Client, merchantID, secretKey, sku string, price float64, stock int) error {
-	// Dökümana (Sayfa 9) göre milimetrik düzeltilmiş URL
-	url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s/inventory-and-prices", merchantID)
+func UpdateHBPriceStock(client *resty.Client, merchantID string, apiKey string, sku string, price float64, stock int) error {
+	// Dökümandaki güncelleme endpoint'i (SIT)
+	url := "https://listing-external-sit.hepsiburada.com/listings/bulk"
 
-	// 400 Merchant ID Hatasını önlemek için MerchantId'yi hem root'ta hem listings içinde gönderiyoruz
-	payload := map[string]interface{}{
-		"merchantId": merchantID,
-		"listings": []map[string]interface{}{
-			{
-				"merchantSku":    sku,
-				"price":          price,
-				"availableStock": stock,
-			},
+	// Hepsiburada'nın beklediği update formatı
+	payload := []map[string]interface{}{
+		{
+			"merchantid":     merchantID,
+			"hepsiburadasku": sku,
+			"price":          price,
+			"availableStock": stock,
 		},
 	}
 
+	fmt.Printf("[LOG] HB Fiyat/Stok Güncelleniyor: SKU: %s, Fiyat: %.2f\n", sku, price)
+
 	resp, err := client.R().
-		SetHeader("accept", "application/json").
 		SetHeader("Content-Type", "application/json").
 		SetHeader("User-Agent", "solidmarket_dev").
-		SetBasicAuth(merchantID, secretKey).
+		SetBasicAuth(merchantID, apiKey).
 		SetBody(payload).
 		Post(url)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("Bağlantı hatası: %v", err)
 	}
-	if resp.IsError() {
-		return fmt.Errorf("Fiyat/Stok Hatası (%d): %s", resp.StatusCode(), resp.String())
+
+	if resp.StatusCode() != http.StatusOK && resp.StatusCode() != http.StatusAccepted {
+		return fmt.Errorf("HB Güncelleme Hatası (%d): %s", resp.StatusCode(), resp.String())
 	}
+
 	return nil
 }
 
-// UpdateHBProductName: MPOP Ticket API üzerinden ürün ismi (başlık) güncelleme talebi açar.
 func UpdateHBProductName(client *resty.Client, merchantID, secretKey, sku, newName string) error {
 	// Dökümana göre SIT Ticket API URL'si
 	url := "https://mpop-sit.hepsiburada.com/ticket-api/api/integrator/import"
