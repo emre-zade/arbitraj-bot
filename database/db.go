@@ -100,38 +100,38 @@ func SyncExcelToMasterDB(products []core.ExcelProduct) {
 	fmt.Printf("[DB] %d ürün master tabloya işleniyor...\n", len(products))
 
 	for _, p := range products {
+		// SQL tarafındaki sütun sıralaması:
 		query := `
-        SELECT 
-            barcode, 
-            COALESCE(product_name, ''), 
-            COALESCE(brand, ''),
-            COALESCE(category_name, ''), 
-            COALESCE(description, ''), 
-            price, 
-            vat_rate, 
-            stock, 
-            delivery_time, 
-            COALESCE(images, ''), 
-            is_dirty,
-            COALESCE(hb_sku, ''), 
-            COALESCE(hb_sync_status, ''), 
-            COALESCE(hb_sync_message, ''),
-            COALESCE(pazarama_id, ''), 
-            COALESCE(pazarama_sync_status, ''), 
-            COALESCE(pazarama_sync_message, ''),
-            COALESCE(ptt_id, ''), 
-            COALESCE(ptt_sync_status, ''), 
-            COALESCE(ptt_sync_message, ''),
-			hb_markup,
-			pazarama_markup,
-			ptt_markup
-        FROM products 
-        WHERE is_dirty = 1`
+        INSERT INTO products (
+            barcode, product_name, brand, category_name, description, 
+            price, vat_rate, stock, delivery_time, images, is_dirty
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) -- 10 adet soru işareti
+        ON CONFLICT(barcode) DO UPDATE SET
+            product_name = excluded.product_name,
+            brand = excluded.brand,
+            category_name = excluded.category_name,
+            description = excluded.description,
+            price = excluded.price,
+            vat_rate = excluded.vat_rate,
+            stock = excluded.stock,
+            delivery_time = excluded.delivery_time,
+            images = excluded.images,
+            is_dirty = 1,
+            updated_at = CURRENT_TIMESTAMP;`
 
 		_, err := DB.Exec(query,
-			p.Barcode, p.Title, p.Brand, p.CategoryName, p.Description,
-			p.Price, p.VatRate, p.Stock, p.DeliveryTime, p.MainImage,
+			p.Barcode,      // 1. ?
+			p.Title,        // 2. ?
+			p.Brand,        // 3. ?
+			p.CategoryName, // 4. ?
+			p.Description,  // 5. ?
+			p.Price,        // 6. ?
+			p.VatRate,      // 7. ?
+			p.Stock,        // 8. ?
+			p.DeliveryTime, // 9. ?
+			p.MainImage,    // 10. ?
 		)
+
 		if err != nil {
 			log.Printf("[HATA] DB Kayıt (%s): %v", p.Barcode, err)
 		}
