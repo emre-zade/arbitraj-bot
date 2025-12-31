@@ -8,10 +8,12 @@ import (
 	"arbitraj-bot/utils"
 	"bufio"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -24,6 +26,8 @@ func main() {
 	client := resty.New()
 	cfg, _ := config.LoadConfig("config/config.json")
 	reader := bufio.NewReader(os.Stdin)
+
+	go StartWatcher(client, &cfg)
 
 	for {
 		fmt.Println("\n" + strings.Repeat("=", 40))
@@ -47,12 +51,100 @@ func main() {
 		case "3":
 			showHbMenu(client, &cfg, reader)
 		case "4":
-			//showDatabaseMenu(client, &cfg)
+			showDatabaseMenu(client, &cfg, reader)
 		case "0":
 			fmt.Println("Güle güle!")
 			return
 		}
 	}
+}
+
+func StartWatcher(client *resty.Client, cfg *core.Config) {
+
+	fmt.Println("[WATCHER] Gözcü başlatıldı. 5 saniyede bir kontroller yapılacak...")
+
+	for {
+		dirtyOnes, err := database.GetDirtyProducts()
+		if err != nil {
+			log.Printf("[HATA] DB okunurken hata: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if len(dirtyOnes) == 0 {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		fmt.Printf("\n[WATCHER] %d adet kirli ürün yakalandı. İşlem başlıyor...\n", len(dirtyOnes))
+
+		var wg sync.WaitGroup
+		for _, p := range dirtyOnes {
+			wg.Add(1)
+			go func(prod core.Product) {
+				defer wg.Done()
+
+				finalHbPrice := prod.Price * prod.HbMarkup
+
+				finalPazaramaPrice := prod.Price * prod.PazaramaMarkup
+
+				fmt.Printf("[LOG] %s için HB Fiyatı: %.2f | Pazarama Fiyatı: %.2f\n",
+					prod.Barcode, finalHbPrice, finalPazaramaPrice)
+
+				fmt.Printf("[LOG] %s için API güncelleme isteği atılıyor...\n", prod.Barcode)
+				database.UpdateSyncResult(prod.Barcode, "pazarama", "SUCCESS", "Başarıyla güncellendi")
+			}(p)
+		}
+		wg.Wait()
+
+		fmt.Println("[WATCHER] Mevcut batch tamamlandı. Bir sonraki tarama için 5 saniye bekleniyor...")
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           DATABASE İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Ürünleri Excel'den Database'e Aktar -> **./storage/urun_listesi.xlsx dosyasından ürünleri ./storage/arbitraj.db dosyasına kaydeder.**")
+		fmt.Println("2- Pazarama Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Pazarama envanterini çeker, barkodları temizler (-PZR) ve Master DB'deki karşılıklarını bulup ID'lerini mühürler.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		s := askInput("\nSeçiminiz: ", reader)
+
+		switch s {
+		case "1":
+			filePath := "./storage/urun_listesi.xlsx"
+			products, err := utils.ReadProductsFromExcel(filePath)
+			if err != nil {
+				fmt.Printf("[HATA] Excel okunamadı: %v\n", err)
+				return
+			}
+
+			if len(products) == 0 {
+				fmt.Println("[!] DB'ye aktarılacak ürün bulunamadı.")
+				return
+			}
+
+			database.SyncExcelToMasterDB(products)
+
+		case "2":
+			token, err := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			if err != nil {
+				fmt.Printf("[-] Giriş hatası: %v\n", err)
+				return
+			}
+			services.SyncPazaramaToMaster(client, cfg, token)
+
+		case "0":
+			return
+		default:
+			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+
 }
 
 func askInput(prompt string, reader *bufio.Reader) string {

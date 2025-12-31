@@ -237,13 +237,48 @@ type HBImportProduct struct {
 }
 
 type ExcelProduct struct {
-	Title       string
-	Barcode     string
-	Brand       string
-	Price       float64
-	VatRate     int
-	Stock       int
-	SKU         string
-	Description string
-	MainImage   string
+	Title        string
+	Barcode      string
+	Brand        string
+	CategoryName string
+	Price        float64
+	VatRate      int
+	Stock        int
+	DeliveryTime int
+	SKU          string
+	Description  string
+	MainImage    string
+}
+
+type Product struct {
+	Barcode      string  `db:"barcode"`
+	ProductName  string  `db:"product_name"`
+	Brand        string  `db:"brand"`
+	CategoryName string  `db:"category_name"`
+	Description  string  `db:"description"`
+	Price        float64 `db:"price"`
+	VatRate      int     `db:"vat_rate"`
+	Stock        int     `db:"stock"`
+	DeliveryTime int     `db:"delivery_time"`
+	Images       string  `db:"images"` // Pipe '|' ayraçlı string
+	IsDirty      int     `db:"is_dirty"`
+
+	// Hepsiburada
+	HbSku         string `db:"hb_sku"`
+	HbSyncStatus  string `db:"hb_sync_status"`
+	HbSyncMessage string `db:"hb_sync_message"`
+
+	// Pazarama
+	PazaramaId          string `db:"pazarama_id"`
+	PazaramaSyncStatus  string `db:"pazarama_sync_status"`
+	PazaramaSyncMessage string `db:"pazarama_sync_message"`
+
+	// PttAVM
+	PttId          string `db:"ptt_id"`
+	PttSyncStatus  string `db:"ptt_sync_status"`
+	PttSyncMessage string `db:"ptt_sync_message"`
+
+	HbMarkup       float64 `db:"hb_markup"`
+	PazaramaMarkup float64 `db:"pazarama_markup"`
+	PttMarkup      float64 `db:"ptt_markup"`
 }

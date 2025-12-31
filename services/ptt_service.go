@@ -17,7 +17,6 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// PttCategoryResponse: XML Parçalama yapısı (Boşluklar kaldırıldı)
 type PttCategoryResponse struct {
 	XMLName xml.Name `xml:"Envelope"`
 	Body    struct {
@@ -205,7 +204,6 @@ func UpdatePttStockPriceRest(client *resty.Client, cfg *core.Config, productID s
 	}
 }
 
-// Fotoğrafları [{order: 1, url: "..."}] formatına sokan güvenli yardımcı fonksiyon
 func formatPhotos(rawPhotos interface{}) []map[string]interface{} {
 	formatted := []map[string]interface{}{}
 	if photos, ok := rawPhotos.([]interface{}); ok {
@@ -231,7 +229,6 @@ func formatPhotos(rawPhotos interface{}) []map[string]interface{} {
 	return formatted
 }
 
-// FetchAndSyncPttCategories: PTT'deki tüm kategorileri çeker ve DB'ye yazar
 func FetchAndSyncPttCategories(client *resty.Client, username, password string) error {
 	url := "https://ws.epttavm.com:83/service.svc"
 
@@ -368,7 +365,6 @@ func UploadProductToPtt(client *resty.Client, username, password string, product
 	return nil
 }
 
-// PTT Kategori XML yapısını karşılamak için Struct'lar
 type CategoryResult struct {
 	ID   int    `xml:"category_id"`
 	Name string `xml:"category_name"`
@@ -383,7 +379,6 @@ type CategoryHelper struct {
 	Name string
 }
 
-// ParseAndLogCategories: Gelen karmaşık XML'i okunaklı bir listeye çevirir.
 func ParseAndLogCategories(xmlData string, label string) {
 	// PTT'nin namespace (a:, s: vb.) karmaşasını temizlemek için basit bir unmarshal
 	// Not: SOAP yanıtlarında namespace temizliği bazen gerekebilir.
@@ -417,7 +412,6 @@ func ParseAndLogCategories(xmlData string, label string) {
 	}
 }
 
-// GetPttMainCategories: Ana kategorileri çeker ve OKUNAKLI bir liste olarak basar.
 func GetPttMainCategories(client *resty.Client, username, password string) {
 	url := "https://ws.pttavm.com:93/service.svc"
 
@@ -473,7 +467,6 @@ func GetPttMainCategories(client *resty.Client, username, password string) {
 	fmt.Println("==============================================")
 }
 
-// extractSimpleTag: PTT'nin <a:tag>şeklindeki verilerini hızlıca ayıklar
 func extractSimpleTag(data, tag string) string {
 	startTag := "<a:" + tag + ">"
 	endTag := "</a:" + tag + ">"
@@ -492,7 +485,6 @@ func extractSimpleTag(data, tag string) string {
 	return data[start : start+end]
 }
 
-// ListAllPttCategories: Dökümandaki GetCategoryTree metodunu kullanarak hiyerarşiyi döker.
 func ListAllPttCategories(client *resty.Client, username, password string) {
 	fmt.Println("\n[*] PTT Kategori Hiyerarşisi Döküman Yöntemiyle Oluşturuluyor...")
 
@@ -515,25 +507,26 @@ func ListAllPttCategories(client *resty.Client, username, password string) {
 }
 
 func fetchAndLogSubTree(client *resty.Client, username, password string, parent CategoryHelper) {
+
 	url := "https://ws.pttavm.com:93/service.svc"
 
 	soapXML := fmt.Sprintf(`
-	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
-	   <soapenv:Header>
-	      <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
-	         <wsse:UsernameToken>
-	            <wsse:Username>%s</wsse:Username>
-	            <wsse:Password>%s</wsse:Password>
-	         </wsse:UsernameToken>
-	      </wsse:Security>
-	   </soapenv:Header>
-	   <soapenv:Body>
-	      <tem:GetCategoryTree>
-	         <tem:parent_id>%s</tem:parent_id>
-	         <tem:last_update>2025</tem:last_update>
-	      </tem:GetCategoryTree>
-	   </soapenv:Body>
-	</soapenv:Envelope>`, username, password, parent.ID)
+		<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+		<soapenv:Header>
+			<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+				<wsse:UsernameToken>
+					<wsse:Username>%s</wsse:Username>
+					<wsse:Password>%s</wsse:Password>
+				</wsse:UsernameToken>
+			</wsse:Security>
+		</soapenv:Header>
+		<soapenv:Body>
+			<tem:GetCategoryTree>
+				<tem:parent_id>%s</tem:parent_id>
+				<tem:last_update>2025</tem:last_update>
+			</tem:GetCategoryTree>
+		</soapenv:Body>
+		</soapenv:Envelope>`, username, password, parent.ID)
 
 	resp, err := client.R().
 		SetHeader("Content-Type", "text/xml;charset=UTF-8").
@@ -548,8 +541,6 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 
 	raw := resp.String()
 
-	// Regex ile gelen ağaçtaki tüm ID ve İsimleri avlayalım
-	// PTT Response etiketleri: <a:id> veya <a:category_id> ve <a:name> veya <a:category_name>
 	idRegex := regexp.MustCompile(`<(?:a:)?(?:id|category_id)>(\d+)</(?:a:)?(?:id|category_id)>`)
 	nameRegex := regexp.MustCompile(`<(?:a:)?(?:name|category_name)>([^<]+)</(?:a:)?(?:name|category_name)>`)
 
@@ -561,7 +552,7 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 		currentID := ids[i][1]
 		if currentID == parent.ID {
 			continue
-		} // Kendini listelemesin
+		}
 
 		currentName := ""
 		if i < len(names) {
@@ -570,7 +561,7 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 
 		if currentID != "" && currentName != "" {
 			currentName = strings.ReplaceAll(currentName, "&amp;", "&")
-			// İSTEDİĞİN FORMAT: [ID: 4] Kozmetik -> [ID: 1090] Besin Takviyeleri
+
 			logLine := fmt.Sprintf("[ID: %s] %-25s -> [ID: %s] %s", parent.ID, parent.Name, currentID, currentName)
 
 			fmt.Println(logLine)
@@ -586,7 +577,6 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 	}
 }
 
-// fetchMainCategoriesData: Sadece veriyi toplar, basmaz.
 func fetchMainCategoriesData(client *resty.Client, username, password string) []CategoryHelper {
 	url := "https://ws.pttavm.com:93/service.svc"
 	soapXML := fmt.Sprintf(`
@@ -698,7 +688,6 @@ func printSubCategories(client *resty.Client, username, password string, parent 
 	}
 }
 
-// extractFlexibleTag: Hem <a:tag> hem <tag> formatını destekler
 func extractFlexibleTag(data, tag string) string {
 	// Namespace'li hali (<a:id>)
 	start := strings.Index(data, "<a:"+tag+">")
@@ -723,7 +712,6 @@ func extractFlexibleTag(data, tag string) string {
 	return data[startIndex : startIndex+endIndex]
 }
 
-// BulkUploadToPtt: Ürünleri 1000'erli paketler halinde PTT'ye gönderir.
 func BulkUploadToPtt(client *resty.Client, username, password string, allProducts []core.PttProduct) {
 	const batchSize = 1000
 	totalProducts := len(allProducts)
@@ -866,7 +854,6 @@ func uploadBatchToPtt(client *resty.Client, username, password string, products 
 	return nil
 }
 
-// GetPttTrackingStatus: Gönderilen paketin onay durumunu sorgular.
 func GetPttTrackingStatus(client *resty.Client, username, password string, trackingId string) {
 	url := "https://ws.pttavm.com:93/service.svc"
 

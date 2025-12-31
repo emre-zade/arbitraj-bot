@@ -196,7 +196,6 @@ func ReadProductsFromExcel(path string) ([]core.ExcelProduct, error) {
 	}
 	defer f.Close()
 
-	// Pazarama listesindeki sayfa adını kullanıyoruz
 	rows, err := f.GetRows("Ürün Listesi")
 	if err != nil {
 		return nil, err
@@ -204,25 +203,30 @@ func ReadProductsFromExcel(path string) ([]core.ExcelProduct, error) {
 
 	var products []core.ExcelProduct
 	for i, row := range rows {
-		// Başlık satırını atla ve boş satırları kontrol et
-		if i == 0 || len(row) < 3 {
+		if i == 0 || len(row) < 10 {
 			continue
 		}
 
-		// Fiyat ve stok dönüşümleri
+		// BARKOD TEMİZLEME: "-PZR" varsa uçuruyoruz
+		cleanBarcode := strings.TrimSuffix(strings.TrimSpace(row[0]), "-PZR")
+
 		priceStr := strings.ReplaceAll(row[2], ",", ".")
 		price, _ := strconv.ParseFloat(priceStr, 64)
+		stock, _ := strconv.Atoi(row[4])
+		vat, _ := strconv.Atoi(row[3])
+		dt, _ := strconv.Atoi(row[5])
 
 		products = append(products, core.ExcelProduct{
-			Title:       row[1],
-			Barcode:     row[0],
-			SKU:         row[0], // Barkod'u SKU olarak kullanıyoruz
-			Brand:       row[6],
-			Price:       price,
-			VatRate:     1,
-			Stock:       25,
-			Description: row[9],
-			MainImage:   row[10],
+			Barcode:      cleanBarcode,
+			Title:        row[1],
+			Price:        price,
+			VatRate:      vat,
+			Stock:        stock,
+			DeliveryTime: dt,
+			Brand:        row[6],
+			CategoryName: row[7],
+			Description:  row[9],
+			MainImage:    row[10], // Pipe '|' ile ayrılmış görseller buraya
 		})
 	}
 	return products, nil

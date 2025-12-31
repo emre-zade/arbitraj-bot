@@ -15,40 +15,128 @@ var DB *sql.DB
 
 func InitDB() {
 	var err error
-	// Klasör kontrolü
 	if _, err := os.Stat("./storage"); os.IsNotExist(err) {
 		os.Mkdir("./storage", 0755)
 	}
 
-	DB, err = sql.Open("sqlite3", "./storage/arbitraj.db?_journal=WAL")
+	dsn := "./storage/arbitraj.db?_journal=WAL&_busy_timeout=5000"
+
+	DB, err = sql.Open("sqlite3", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Tabloyu hb_sku UNIQUE olacak şekilde revize ediyoruz
+	DB.SetMaxOpenConns(1)
+
 	sqlStmt := `
 	CREATE TABLE IF NOT EXISTS products (
-		barcode TEXT PRIMARY KEY,
-		product_name TEXT,
-		stock INTEGER,
-		price REAL,
-		delivery_time INTEGER,
-		ptt_barcode TEXT,
-		pazarama_code TEXT,
-		hb_sku TEXT UNIQUE, 
-		image_path TEXT,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		-- Kullanıcıdan Gelen Ana Sütunlar
+		barcode TEXT PRIMARY KEY,            -- Satıcı Stok Kodu (Master Key)
+		product_name TEXT,                   -- Ürün Adı
+		brand TEXT,                          -- Marka
+		category_name TEXT,                  -- Kategori Adı
+		description TEXT,                    -- Ürün Açıklaması
+		price REAL DEFAULT 0.0,              -- Fiyat
+		vat_rate INTEGER DEFAULT 20,         -- KDV
+		stock INTEGER DEFAULT 0,             -- Stok
+		delivery_time INTEGER DEFAULT 3,     -- Kargo Süresi
+		images TEXT,                         -- Görseller (Pipe '|' ayraçlı)
+
+		-- Teknik Kontrol Sütunları
+		is_dirty INTEGER DEFAULT 0,          -- 1 ise Watcher işlem yapacak
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+		-- Hepsiburada Entegrasyon Sütunları
+		hb_sku TEXT,
+		hb_sync_status TEXT DEFAULT 'PENDING',
+		hb_sync_message TEXT,
+
+		-- Pazarama Entegrasyon Sütunları
+		pazarama_id TEXT,
+		pazarama_sync_status TEXT DEFAULT 'PENDING',
+		pazarama_sync_message TEXT,
+
+		-- PttAVM Entegrasyon Sütunları
+		ptt_id TEXT,
+		ptt_sync_status TEXT DEFAULT 'PENDING',
+		ptt_sync_message TEXT,
+
+		hb_markup REAL DEFAULT 1.0,
+		pazarama_markup REAL DEFAULT 1.0,
+		ptt_markup REAL DEFAULT 1.0
 	);`
 
 	_, err = DB.Exec(sqlStmt)
+	if err != nil {
+		log.Printf("Tablo oluşturma hatası: %v", err)
+	}
+
+	triggerStmt := `
+	CREATE TRIGGER IF NOT EXISTS update_sync_trigger
+	AFTER UPDATE OF 
+		product_name, price, stock, delivery_time, 
+		images, description, brand, category_name 
+	ON products
+	FOR EACH ROW
+	BEGIN
+		UPDATE products 
+		SET is_dirty = 1, updated_at = CURRENT_TIMESTAMP 
+		WHERE barcode = NEW.barcode;
+	END;`
+
+	_, err = DB.Exec(triggerStmt)
+	if err != nil {
+		log.Printf("Trigger oluşturma hatası: %v", err)
+	}
 
 	InitGlobalCategoryTables()
 	InitBrandTable()
 	InitPazaramaAttributeTable()
 
-	if err != nil {
-		log.Printf("Tablo hatası: %v", err)
+	fmt.Println("[LOG] Master Veritabanı ve Otomatik Tetikleyiciler hazır.")
+}
+
+func SyncExcelToMasterDB(products []core.ExcelProduct) {
+	fmt.Printf("[DB] %d ürün master tabloya işleniyor...\n", len(products))
+
+	for _, p := range products {
+		query := `
+        SELECT 
+            barcode, 
+            COALESCE(product_name, ''), 
+            COALESCE(brand, ''),
+            COALESCE(category_name, ''), 
+            COALESCE(description, ''), 
+            price, 
+            vat_rate, 
+            stock, 
+            delivery_time, 
+            COALESCE(images, ''), 
+            is_dirty,
+            COALESCE(hb_sku, ''), 
+            COALESCE(hb_sync_status, ''), 
+            COALESCE(hb_sync_message, ''),
+            COALESCE(pazarama_id, ''), 
+            COALESCE(pazarama_sync_status, ''), 
+            COALESCE(pazarama_sync_message, ''),
+            COALESCE(ptt_id, ''), 
+            COALESCE(ptt_sync_status, ''), 
+            COALESCE(ptt_sync_message, ''),
+			hb_markup,
+			pazarama_markup,
+			ptt_markup
+        FROM products 
+        WHERE is_dirty = 1`
+
+		_, err := DB.Exec(query,
+			p.Barcode, p.Title, p.Brand, p.CategoryName, p.Description,
+			p.Price, p.VatRate, p.Stock, p.DeliveryTime, p.MainImage,
+		)
+		if err != nil {
+			log.Printf("[HATA] DB Kayıt (%s): %v", p.Barcode, err)
+		}
 	}
+	fmt.Println("[OK] Senkronizasyon tamamlandı.")
 }
 
 func SavePttProduct(barcode, name string, stock int, price float64, originalBarcode string, imagePath string) {
@@ -125,9 +213,6 @@ func SaveHbProduct(sku, barcode, productName string, stock int, price float64) {
 	}
 }
 
-// database/db.go
-
-// SavePlatformCategories: HB'den gelen kategorileri senin 'platform_categories' tablosuna yazar
 func SavePlatformCategories(platform string, categories []core.HBCategory) error {
 	tx, err := DB.Begin()
 	if err != nil {
@@ -266,5 +351,93 @@ func InitPazaramaAttributeTable() {
 	_, err := DB.Exec(sql)
 	if err != nil {
 		fmt.Printf("[HATA] Attribute tablosu oluşturulamadı: %v\n", err)
+	}
+}
+
+func GetDirtyProducts() ([]core.Product, error) {
+	query := `
+		SELECT 
+			barcode, 
+			COALESCE(product_name, ''), 
+			COALESCE(brand, ''), 
+			COALESCE(category_name, ''), 
+			COALESCE(description, ''), 
+			price,
+			vat_rate, 
+			stock, 
+			delivery_time, 
+			COALESCE(images, ''), 
+			is_dirty,
+			COALESCE(hb_sku, ''), 
+			COALESCE(hb_sync_status, ''), 
+			COALESCE(hb_sync_message, ''),
+			COALESCE(pazarama_id, ''), 
+			COALESCE(pazarama_sync_status, ''), 
+			COALESCE(pazarama_sync_message, ''),
+			COALESCE(ptt_id, ''), 
+			COALESCE(ptt_sync_status, ''), 
+			COALESCE(ptt_sync_message, ''),
+			hb_markup,
+			pazarama_markup,
+			ptt_markup
+		FROM products 
+		WHERE is_dirty = 1 LIMIT 50`
+
+	rows, err := DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []core.Product
+	for rows.Next() {
+		var p core.Product
+		// Scan sırası SELECT sırasıyla birebir aynı olmalı
+		err := rows.Scan(
+			&p.Barcode,
+			&p.ProductName,
+			&p.Brand,
+			&p.CategoryName,
+			&p.Description,
+			&p.Price,
+			&p.VatRate,
+			&p.Stock,
+			&p.DeliveryTime,
+			&p.Images,
+			&p.IsDirty,
+			&p.HbSku, &p.HbSyncStatus, &p.HbSyncMessage,
+			&p.PazaramaId, &p.PazaramaSyncStatus, &p.PazaramaSyncMessage,
+			&p.PttId, &p.PttSyncStatus, &p.PttSyncMessage,
+			&p.HbMarkup, &p.PazaramaMarkup, &p.PttMarkup,
+		)
+
+		if err != nil {
+			fmt.Printf("[HATA] Satır okuma hatası (%s): %v\n", p.Barcode, err)
+			continue
+		}
+		products = append(products, p)
+	}
+
+	return products, nil
+}
+
+func UpdateSyncResult(barcode string, platform string, status string, message string) {
+
+	columnStatus := fmt.Sprintf("%s_sync_status", platform)
+	columnMessage := fmt.Sprintf("%s_sync_message", platform)
+
+	query := fmt.Sprintf("UPDATE products SET %s = ?, %s = ?, is_dirty = 0 WHERE barcode = ?", columnStatus, columnMessage)
+
+	result, err := DB.Exec(query, status, message, barcode)
+	if err != nil {
+		log.Printf("[DB HATA] Güncelleme yapılamadı (%s): %v", barcode, err)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("[DB UYARI] Hiçbir satır güncellenmedi. Barkod hatalı olabilir: %s", barcode)
+	} else {
+		log.Printf("[DB OK] %s için %s durumu kaydedildi ve is_dirty=0 yapıldı.", barcode, platform)
 	}
 }

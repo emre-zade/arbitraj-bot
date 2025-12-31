@@ -34,6 +34,7 @@ func FetchProducts(client *resty.Client, token string) ([]core.PazaramaProduct, 
 	size := 100 // Güvenli ve standart limit
 
 	for {
+		fmt.Printf("[LOG] Pazarama ürünleri çekiliyor: Sayfa %d...\n", page)
 		var result core.PazaramaProductResponse
 		resp, err := client.R().
 			SetAuthToken(token).
@@ -66,6 +67,8 @@ func FetchProducts(client *resty.Client, token string) ([]core.PazaramaProduct, 
 		}
 
 		page++
+
+		time.Sleep(1 * time.Second)
 	}
 
 	return allProducts, nil
