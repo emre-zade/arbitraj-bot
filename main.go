@@ -29,6 +29,13 @@ func main() {
 
 	go StartWatcher(client, &cfg)
 
+	time.Sleep(1 * time.Second)
+
+	ShowMainMenu(client, cfg, reader)
+}
+
+func ShowMainMenu(client *resty.Client, cfg core.Config, reader *bufio.Reader) {
+
 	for {
 		fmt.Println("\n" + strings.Repeat("=", 40))
 		fmt.Println("       ARBITRAJ BOT - ANA MENÜ")
@@ -98,6 +105,7 @@ func StartWatcher(client *resty.Client, cfg *core.Config) {
 		wg.Wait()
 
 		fmt.Println("[WATCHER] Mevcut batch tamamlandı. Bir sonraki tarama için 5 saniye bekleniyor...")
+		fmt.Print("Seçiminiz: ")
 		time.Sleep(5 * time.Second)
 	}
 }
