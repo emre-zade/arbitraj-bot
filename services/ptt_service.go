@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -54,19 +55,20 @@ func FetchAllPttProducts(client *resty.Client, cfg *core.Config) []core.PttProdu
 			SetBody([]byte(payload)).Post(url)
 
 		if err != nil {
+			log.Printf("[HATA] PTT Sayfa %d çekilemedi: %v", page, err)
 			break
 		}
+
 		var result core.PttListResponse
 		xml.Unmarshal(resp.Body(), &result)
+
 		if len(result.Products) == 0 {
 			break
 		}
+
 		allProducts = append(allProducts, result.Products...)
-		fmt.Printf("[i] Sayfa %d çekildi. (Toplam: %d ürün)\n", page, len(allProducts))
+		fmt.Printf("[PTT] %d. sayfa verileri alındı. (Şu anki toplam: %d ürün)\n", page, len(allProducts))
 		page++
-		if page > 20 {
-			break
-		}
 	}
 	return allProducts
 }
@@ -227,47 +229,6 @@ func formatPhotos(rawPhotos interface{}) []map[string]interface{} {
 		}
 	}
 	return formatted
-}
-
-func FetchAndSyncPttCategories(client *resty.Client, username, password string) error {
-	url := "https://ws.epttavm.com:83/service.svc"
-
-	soapXML := fmt.Sprintf(`
-	<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://tempuri.org/">
-	   <soapenv:Header/>
-	   <soapenv:Body>
-	      <ser:GetKategoriListesi>
-	         <ser:kullaniciAdi>%s</ser:kullaniciAdi>
-	         <ser:sifre>%s</ser:sifre>
-	      </ser:GetKategoriListesi>
-	   </soapenv:Body>
-	</soapenv:Envelope>`, username, password)
-
-	resp, err := client.R().
-		SetHeader("Content-Type", "text/xml;charset=UTF-8").
-		SetHeader("SOAPAction", "http://tempuri.org/IService/GetKategoriListesi").
-		SetBody([]byte(soapXML)).
-		Post(url)
-
-	if err != nil {
-		return err
-	}
-	if resp.IsError() {
-		return fmt.Errorf("PTT API Hatası (%d)", resp.StatusCode())
-	}
-
-	var categoryData PttCategoryResponse
-	if err := xml.Unmarshal(resp.Body(), &categoryData); err != nil {
-		return fmt.Errorf("XML Parse Hatası: %v", err)
-	}
-
-	cats := categoryData.Body.GetKategoriListesiResponse.GetKategoriListesiResult.KategoriBilgileri
-	for _, c := range cats {
-		database.SavePttCategory(c.KategoriId, c.KategoriAdi)
-	}
-
-	fmt.Printf("[+] %d PTT kategorisi veritabanına işlendi.\n", len(cats))
-	return nil
 }
 
 func UploadProductToPtt(client *resty.Client, username, password string, product core.PttProduct) error {
@@ -485,29 +446,24 @@ func extractSimpleTag(data, tag string) string {
 	return data[start : start+end]
 }
 
-func ListAllPttCategories(client *resty.Client, username, password string) {
-	fmt.Println("\n[*] PTT Kategori Hiyerarşisi Döküman Yöntemiyle Oluşturuluyor...")
+func ListAllPttCategories(client *resty.Client, cfg *core.Config) {
+	fmt.Println("\n[*] PTT Kategori Hiyerarşisi Veritabanına Mühürleniyor...")
 
-	// 1. Önce Ana Kategorileri alalım (Bu listenin geldiğini biliyoruz)
-	mainCategories := fetchMainCategoriesData(client, username, password)
-
-	fmt.Printf("[+] %d ana kategori üzerinden ağaç dallandırılıyor...\n", len(mainCategories))
-	fmt.Println("==================================================================")
+	mainCategories := fetchMainCategoriesData(client, cfg.Ptt.Username, cfg.Ptt.Password)
 
 	for _, main := range mainCategories {
-		// Her ana kategori için dökümandaki GetCategoryTree metodunu çağıralım
-		fetchAndLogSubTree(client, username, password, main)
 
-		// Sunucuyu yormamak için 1 saniye bekleyelim
-		time.Sleep(1 * time.Second)
+		database.SavePlatformCategory("PTT", "0", "Root", main.ID, main.Name, false)
+
+		fetchAndLogSubTree(client, cfg.Ptt.Username, cfg.Ptt.Password, main)
+
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	fmt.Println("==================================================================")
-	fmt.Println("[+] İşlem tamamlandı. Logları 'storage/bot_logs.txt' üzerinden inceleyebilirsin.")
+	fmt.Println("[OK] Tüm PTT ağacı platform_categories tablosuna işlendi.")
 }
 
 func fetchAndLogSubTree(client *resty.Client, username, password string, parent CategoryHelper) {
-
 	url := "https://ws.pttavm.com:93/service.svc"
 
 	soapXML := fmt.Sprintf(`
@@ -535,7 +491,7 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 		Post(url)
 
 	if err != nil {
-		fmt.Printf(" [!] %s sorgusunda hata: %v\n", parent.Name, err)
+		fmt.Printf(" [!] %s hatası: %v\n", parent.Name, err)
 		return
 	}
 
@@ -547,7 +503,6 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 	ids := idRegex.FindAllStringSubmatch(raw, -1)
 	names := nameRegex.FindAllStringSubmatch(raw, -1)
 
-	count := 0
 	for i := 0; i < len(ids); i++ {
 		currentID := ids[i][1]
 		if currentID == parent.ID {
@@ -556,24 +511,18 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 
 		currentName := ""
 		if i < len(names) {
-			currentName = names[i][1]
+			currentName = strings.ReplaceAll(names[i][1], "&amp;", "&")
 		}
 
 		if currentID != "" && currentName != "" {
-			currentName = strings.ReplaceAll(currentName, "&amp;", "&")
-
 			logLine := fmt.Sprintf("[ID: %s] %-25s -> [ID: %s] %s", parent.ID, parent.Name, currentID, currentName)
-
 			fmt.Println(logLine)
 			if utils.InfoLogger != nil {
 				utils.InfoLogger.Println(logLine)
 			}
-			count++
-		}
-	}
 
-	if count == 0 && utils.InfoLogger != nil {
-		utils.InfoLogger.Printf(">>> %s (%s) için alt dal bulunamadı veya PTT boş döndü.", parent.Name, parent.ID)
+			database.SavePlatformCategory("PTT", parent.ID, parent.Name, currentID, currentName, true)
+		}
 	}
 }
 

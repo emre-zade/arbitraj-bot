@@ -276,25 +276,34 @@ func InitPttCategoryTable() {
 	}
 }
 
-func SavePttCategory(id int, name string) {
-	query := `INSERT OR REPLACE INTO ptt_categories (category_id, category_name) VALUES (?, ?)`
-	_, err := DB.Exec(query, id, name)
+func SavePlatformCategory(platform, parentId, parentName, catId, catName string, isLeaf bool) {
+	query := `
+    INSERT INTO platform_categories (platform, parent_id, parent_name, category_id, category_name, is_leaf)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(platform, category_id) DO UPDATE SET
+        parent_id = excluded.parent_id,
+        parent_name = excluded.parent_name,
+        category_name = excluded.category_name,
+        is_leaf = excluded.is_leaf;`
+
+	_, err := DB.Exec(query, platform, parentId, parentName, catId, catName, isLeaf)
 	if err != nil {
-		log.Printf("[-] Kategori kaydedilemedi (%d): %v", id, err)
+		log.Printf("[HATA] Kategori mühürlenemedi (%s): %v", catName, err)
 	}
 }
 
 func InitGlobalCategoryTables() {
 	// 1. Tüm platformların ham kategorilerini tutan tablo
 	sqlAllCategories := `
-    CREATE TABLE IF NOT EXISTS platform_categories (
-        platform TEXT,         -- 'ptt', 'pazarama', 'hb'
-        category_id TEXT,      -- Platformun verdiği ID
-        category_name TEXT,    -- Platformun verdiği isim
-        parent_id TEXT,        -- Üst kategori (Ağaç yapısı için)
-        is_leaf BOOLEAN,       -- En alt kategori mi? (Ürün yüklenebilir mi?)
-        PRIMARY KEY(platform, category_id)
-    );`
+	CREATE TABLE IF NOT EXISTS platform_categories (
+		platform TEXT,           -- 'PTT', 'HB', 'PZR'
+		parent_id TEXT,         -- Üst kategori ID
+		parent_name TEXT,       -- Üst kategori Adı
+		category_id TEXT,       -- Mevcut kategori ID
+		category_name TEXT,     -- Mevcut kategori Adı
+		is_leaf BOOLEAN,        -- En alt kırılım mı?
+		PRIMARY KEY(platform, category_id)
+	);`
 
 	// 2. Master kategorilerini platform ID'lerine bağlayan tablo
 	sqlMappings := `

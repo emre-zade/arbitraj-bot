@@ -30,7 +30,7 @@ func main() {
 	cfg, _ := config.LoadConfig("config/config.json")
 	reader := bufio.NewReader(os.Stdin)
 
-	go StartWatcher(client, &cfg)
+	//go StartWatcher(client, &cfg)
 
 	time.Sleep(1 * time.Second)
 
@@ -102,7 +102,8 @@ func StartWatcher(client *resty.Client, cfg *core.Config) {
 					prod.Barcode, finalHbPrice, finalPazaramaPrice)
 
 				log.Printf("[LOG] %s için API güncelleme isteği atılıyor...\n", prod.Barcode)
-				database.UpdateSyncResult(prod.Barcode, "pazarama", "SUCCESS", "Başarıyla güncellendi")
+
+				//database.UpdateSyncResult(prod.Barcode, "pazarama", "SUCCESS", "Başarıyla güncellendi")
 			}(p)
 		}
 		wg.Wait()
@@ -113,6 +114,120 @@ func StartWatcher(client *resty.Client, cfg *core.Config) {
 	}
 }
 
+func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           PAZARAMA İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
+		fmt.Println("2- Pazarama Kategori Listesini DB ile Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
+		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
+		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
+		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
+		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
+		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
+		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		s := askInput("\nSeçiminiz: ", reader)
+
+		token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+
+		switch s {
+		case "1":
+			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
+		case "2":
+			services.SyncPazaramaCategories(client, token)
+		case "3":
+			services.SyncPazaramaBrands(client, token)
+		case "4":
+			fmt.Print("Analiz edilecek Kategori ID: ")
+			var id string
+			fmt.Scanln(&id)
+			services.AutoMapMandatoryAttributes(client, token, id)
+		case "5":
+			handlePazaramaSingleUpload(client, cfg, reader)
+		case "6":
+			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
+		case "7":
+			handlePazaramaCompare()
+		case "8":
+			handlePazaramaMissingUpload(client, cfg)
+		case "0":
+			return
+		}
+	}
+}
+
+func showPttMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("           PttAVM İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Ptt AVM'den bütün kategorileri çek ve log dosyasına kaydet -> **Kategori ağacını çekip ./storage/bot_logs.txt dosyasına kaydeder.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		s := askInput("\nSeçiminiz: ", reader)
+
+		switch s {
+		case "1":
+			services.ListAllPttCategories(client, cfg)
+		case "0":
+			return
+		default:
+			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+}
+
+func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
+	for {
+		fmt.Println("\n" + strings.Repeat("-", 45))
+		fmt.Println("          HEPSİBURADA İŞLEMLERİ")
+		fmt.Println(strings.Repeat("-", 45))
+		fmt.Println("1- Mağaza Ürünlerini Listele -> **Mevcut SKU, Stok ve Fiyat bilgilerini çeker.**")
+		fmt.Println("2- Tekil Fiyat & Stok Güncelle -> **SKU bazlı anlık güncelleme yapar.**")
+		fmt.Println("3- Ürün İsmi Güncelle (Ticket) -> **Ürün başlığını değiştirmek için talep açar.**")
+		fmt.Println("4- Kategorileri DB ile Senkronize Et -> **Bütün kategorileri çekip DB dosyasına yazar.**")
+		fmt.Println("5- Kategori Ara ve Özellik Analizi -> **Aranan kategori isminin zorunluğu özelliği varsa ekrana yazdırır.**")
+		fmt.Println("6- Excel ile Toplu Ürün Yükle -> **TEST**")
+		fmt.Println("7- Tracking ID ile ürün durumu sorgula -> **Ürün yüklendikten sonra API'den dönen tracking id ile sorgulama yapılabilir.**")
+		fmt.Println("8- Excel ile toplu ürün yükle -> **./storage/urun_listesi.xlsx dosyasındaki ürünleri hepsiburada'ya yeni ürün olarak talep açar.**")
+		fmt.Println("0- Ana Menüye Dön")
+
+		s := askInput("\nSeçiminiz: ", reader)
+
+		switch s {
+		case "1":
+			handleHbFetchProducts(client, cfg)
+			services.FetchHBProductsWithDetails(client, cfg)
+		case "2":
+			handleHbUpdatePriceStock(client, cfg, reader)
+		case "3":
+			handleHbUpdateName(client, cfg, reader)
+		case "4":
+			err := services.SyncHBCategories(client, cfg)
+			if err != nil {
+				fmt.Printf("[HATA] Senkronizasyon hatası: %v\n", err)
+			}
+		case "5":
+			handleHbCategorySearchAndAnalysis(client, cfg, reader)
+		case "6":
+			handleHbExcelUpload(client, cfg, reader)
+		case "7":
+			myReader := bufio.NewReader(os.Stdin)
+			tid := askInput("\nTracking ID giriniz:", myReader)
+			services.CheckHBImportStatus(client, cfg, tid)
+		case "8":
+			handleHbBulkExcelUpload(client, cfg, reader)
+		case "0":
+			return
+		default:
+			fmt.Println("[!] Geçersiz seçim.")
+		}
+	}
+}
+
 func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 
 	for {
@@ -120,7 +235,9 @@ func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 		fmt.Println("           DATABASE İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
 		fmt.Println("1- Ürünleri Excel'den Database'e Aktar -> **./storage/urun_listesi.xlsx dosyasından ürünleri ./storage/arbitraj.db dosyasına kaydeder.**")
-		fmt.Println("2- Pazarama Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Pazarama envanterini çeker, barkodları temizler (-PZR) ve Master DB'deki karşılıklarını bulup ID'lerini mühürler.**")
+		fmt.Println("2- Pazarama Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Pazarama envanterini çeker, barkodları temizler (-PZR) ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
+		fmt.Println("3- Ptt AVM ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Ptt AVM envanterini çeker ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
+
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
@@ -148,6 +265,15 @@ func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 				return
 			}
 			services.SyncPazaramaToMaster(client, cfg, token)
+
+		case "3":
+			fmt.Println("\n[PTT] Mevcut envanter çekiliyor ve Master DB ile mühürleniyor...")
+			pttList := services.FetchAllPttProducts(client, cfg)
+			if len(pttList) > 0 {
+				services.SyncPttToMaster(pttList)
+			} else {
+				fmt.Println("[!] PTT'den ürün çekilemedi.")
+			}
 
 		case "0":
 			return
@@ -581,99 +707,6 @@ func handlePazaramaMissingUpload(client *resty.Client, cfg *core.Config) {
 	fmt.Println("[OK] Eksik yükleme talepleri başarıyla iletildi.")
 }
 
-func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	for {
-		fmt.Println("\n" + strings.Repeat("-", 45))
-		fmt.Println("           PAZARAMA İŞLEMLERİ")
-		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
-		fmt.Println("2- Kategori Listesini Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
-		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
-		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
-		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
-		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
-		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
-		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
-		fmt.Println("0- Ana Menüye Dön")
-
-		s := askInput("\nSeçiminiz: ", reader)
-
-		token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
-
-		switch s {
-		case "1":
-			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
-		case "2":
-			services.SyncPazaramaCategories(client, token)
-		case "3":
-			services.SyncPazaramaBrands(client, token)
-		case "4":
-			fmt.Print("Analiz edilecek Kategori ID: ")
-			var id string
-			fmt.Scanln(&id)
-			services.AutoMapMandatoryAttributes(client, token, id)
-		case "5":
-			handlePazaramaSingleUpload(client, cfg, reader)
-		case "6":
-			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
-		case "7":
-			handlePazaramaCompare()
-		case "8":
-			handlePazaramaMissingUpload(client, cfg)
-		case "0":
-			return
-		}
-	}
-}
-
-func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	for {
-		fmt.Println("\n" + strings.Repeat("-", 45))
-		fmt.Println("          HEPSİBURADA İŞLEMLERİ")
-		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Mağaza Ürünlerini Listele -> **Mevcut SKU, Stok ve Fiyat bilgilerini çeker.**")
-		fmt.Println("2- Tekil Fiyat & Stok Güncelle -> **SKU bazlı anlık güncelleme yapar.**")
-		fmt.Println("3- Ürün İsmi Güncelle (Ticket) -> **Ürün başlığını değiştirmek için talep açar.**")
-		fmt.Println("4- Kategorileri DB ile Senkronize Et -> **Bütün kategorileri çekip DB dosyasına yazar.**")
-		fmt.Println("5- Kategori Ara ve Özellik Analizi -> **Aranan kategori isminin zorunluğu özelliği varsa ekrana yazdırır.**")
-		fmt.Println("6- Excel ile Toplu Ürün Yükle -> **TEST**")
-		fmt.Println("7- Tracking ID ile ürün durumu sorgula -> **Ürün yüklendikten sonra API'den dönen tracking id ile sorgulama yapılabilir.**")
-		fmt.Println("8- Excel ile toplu ürün yükle -> **./storage/urun_listesi.xlsx dosyasındaki ürünleri hepsiburada'ya yeni ürün olarak talep açar.**")
-		fmt.Println("0- Ana Menüye Dön")
-
-		s := askInput("\nSeçiminiz: ", reader)
-
-		switch s {
-		case "1":
-			handleHbFetchProducts(client, cfg)
-			services.FetchHBProductsWithDetails(client, cfg)
-		case "2":
-			handleHbUpdatePriceStock(client, cfg, reader)
-		case "3":
-			handleHbUpdateName(client, cfg, reader)
-		case "4":
-			err := services.SyncHBCategories(client, cfg)
-			if err != nil {
-				fmt.Printf("[HATA] Senkronizasyon hatası: %v\n", err)
-			}
-		case "5":
-			handleHbCategorySearchAndAnalysis(client, cfg, reader)
-		case "6":
-			handleHbExcelUpload(client, cfg, reader)
-		case "7":
-			myReader := bufio.NewReader(os.Stdin)
-			tid := askInput("\nTracking ID giriniz:", myReader)
-			services.CheckHBImportStatus(client, cfg, tid)
-		case "8":
-			handleHbBulkExcelUpload(client, cfg, reader)
-		case "0":
-			return
-		default:
-			fmt.Println("[!] Geçersiz seçim.")
-		}
-	}
-}
-
 func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 	fmt.Println("\n[LOG] Excel dosyası toplu işlem için okunuyor...")
 
@@ -887,36 +920,5 @@ func handleHbUpdateName(client *resty.Client, cfg *core.Config, reader *bufio.Re
 		fmt.Printf("[HATA] İsim güncelleme talebi başarısız: %v\n", err)
 	} else {
 		fmt.Printf("[OK] %s için isim değiştirme talebi (Ticket) başarıyla açıldı.\n", sku)
-	}
-}
-
-func showPttMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
-	for {
-		fmt.Println("\n" + strings.Repeat("-", 45))
-		fmt.Println("           PttAVM İŞLEMLERİ")
-		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Barkod ile Katalog Sorgula -> **Ürünün PttAVM kataloğunda olup olmadığını kontrol eder.**")
-		fmt.Println("2- Toplu Stok & Fiyat Güncelle -> **Excel listesini PttAVM paneline senkronize eder.**")
-		fmt.Println("3- Tracking ID Sorgula -> **Siparişlerin kargo durumlarını takip eder.**")
-		fmt.Println("0- Ana Menüye Dön")
-
-		// Menü seçimi
-		s := askInput("\nSeçiminiz: ", reader)
-
-		switch s {
-		case "1":
-			// Barkod girişi için de reader kullanıyoruz
-			barcode := askInput("Sorgulanacak Barkod: ", reader)
-			if barcode != "" {
-				fmt.Printf("[LOG] %s barkodu sorgulanıyor...\n", barcode)
-				// services.SearchPttCatalog(client, barcode)
-			} else {
-				fmt.Println("[!] Barkod boş olamaz.")
-			}
-		case "0":
-			return
-		default:
-			fmt.Println("[!] Geçersiz seçim.")
-		}
 	}
 }
