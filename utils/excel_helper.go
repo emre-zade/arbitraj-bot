@@ -10,7 +10,7 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-const ExcelPath = "./torage/Pazarama_Urun_Listesi.xlsx"
+const ExcelPath = "./storage/Pazarama_Urun_Listesi.xlsx"
 const PttExcelPath = "./storage/PttAVM_Urun_Listesi.xlsx"
 
 func SaveToExcel(products []core.PazaramaProduct) error {

@@ -8,16 +8,13 @@ import (
 )
 
 func DownloadImage(url, barcode string) (string, error) {
-	// 1. Klasör yolunu belirle (storage/images)
 	dir := filepath.Join("storage", "images")
 
-	// 2. Klasörü ve üst klasörleri (storage dahil) oluştur
 	err := os.MkdirAll(dir, os.ModePerm)
 	if err != nil {
 		return "", err
 	}
 
-	// 3. Dosya yolu (temiz_barkod.webp)
 	filePath := filepath.Join(dir, barcode+".webp")
 
 	if _, err := os.Stat(filePath); err == nil {
@@ -38,6 +35,5 @@ func DownloadImage(url, barcode string) (string, error) {
 
 	_, err = io.Copy(out, resp.Body)
 
-	// DB'ye kaydederken klasör hiyerarşisini koruyan yolu dönelim
 	return filePath, err
 }

@@ -517,10 +517,11 @@ func fetchAndLogSubTree(client *resty.Client, username, password string, parent 
 		if currentID != "" && currentName != "" {
 			logLine := fmt.Sprintf("[ID: %s] %-25s -> [ID: %s] %s", parent.ID, parent.Name, currentID, currentName)
 			fmt.Println(logLine)
-			if utils.InfoLogger != nil {
-				utils.InfoLogger.Println(logLine)
-			}
-
+			/*
+				if utils.InfoLogger != nil {
+					utils.InfoLogger.Println(logLine)
+				}
+			*/
 			database.SavePlatformCategory("PTT", parent.ID, parent.Name, currentID, currentName, true)
 		}
 	}
