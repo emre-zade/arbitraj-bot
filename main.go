@@ -120,13 +120,12 @@ func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 		fmt.Println("           PAZARAMA İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
 		fmt.Println("1- Excel ID Doldur (I sütunu) -> **H sütunundaki kategori ismine bakıp I sütununu ID ile doldurur.**")
-		fmt.Println("2- Pazarama Kategori Listesini DB ile Senkronize Et -> **Pazarama API'den tüm kategori ağacını çekip DB'ye kaydeder.**")
-		fmt.Println("3- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
-		fmt.Println("4- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
-		fmt.Println("5- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
-		fmt.Println("6- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
-		fmt.Println("7- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
-		fmt.Println("8- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
+		fmt.Println("2- Marka Listesini Senkronize Et -> **Pazarama API'den tüm markaları çekip yerel DB'yi günceller.**")
+		fmt.Println("3- Kategori Özellik Analizi (Auto-Map) -> **Seçilen kategorinin zorunlu alanlarını öğrenip hafızaya alır.**")
+		fmt.Println("4- Tekil Ürün Yükle -> **Excel'den seçeceğiniz tek bir satırı Pazarama'ya yükler ve takip eder.**")
+		fmt.Println("5- Toplu Ürün Yükle -> **Excel'deki tüm listeyi 100'erli paketler halinde Pazarama'ya fırlatır.**")
+		fmt.Println("6- Panel vs Excel Karşılaştır (Diff) -> **Panelden indirdiğiniz liste ile Excel'i karşılaştırıp eksikleri bulur.**")
+		fmt.Println("7- Eksik Ürünleri Tespit Et ve Yükle -> **Diff sonucu oluşan eksik_urunler.xlsx dosyasını yükler.**")
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
@@ -136,22 +135,21 @@ func showPazaramaMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 		switch s {
 		case "1":
 			services.FillPazaramaCategoryIDs("./storage/pazarama_urun_yukleme.xlsx")
+
 		case "2":
-			services.SyncPazaramaCategories(client, token)
-		case "3":
 			services.SyncPazaramaBrands(client, token)
-		case "4":
+		case "3":
 			fmt.Print("Analiz edilecek Kategori ID: ")
 			var id string
 			fmt.Scanln(&id)
 			services.AutoMapMandatoryAttributes(client, token, id)
-		case "5":
+		case "4":
 			handlePazaramaSingleUpload(client, cfg, reader)
-		case "6":
+		case "5":
 			services.BulkUploadPazarama(client, token, "./storage/pazarama_urun_yukleme.xlsx")
-		case "7":
+		case "6":
 			handlePazaramaCompare()
-		case "8":
+		case "7":
 			handlePazaramaMissingUpload(client, cfg)
 		case "0":
 			return
@@ -164,14 +162,15 @@ func showPttMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		fmt.Println("\n" + strings.Repeat("-", 45))
 		fmt.Println("           PttAVM İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Ptt AVM'den bütün kategorileri çek ve log dosyasına kaydet -> **Kategori ağacını çekip ./storage/bot_logs.txt dosyasına kaydeder.**")
+
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
 
 		switch s {
+
 		case "1":
-			services.ListAllPttCategories(client, cfg)
+
 		case "0":
 			return
 		default:
@@ -234,10 +233,16 @@ func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 		fmt.Println("\n" + strings.Repeat("-", 45))
 		fmt.Println("           DATABASE İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Ürünleri Excel'den Database'e Aktar -> **./storage/urun_listesi.xlsx dosyasından ürünleri ./storage/arbitraj.db dosyasına kaydeder.**")
-		fmt.Println("2- Pazarama Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Pazarama envanterini çeker, barkodları temizler (-PZR) ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
-		fmt.Println("3- Ptt AVM ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Ptt AVM envanterini çeker ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
-
+		fmt.Println("1- Excel 		 Ürünlerini DB'ye Aktar -> **./storage/urun_listesi.xlsx dosyasından ürünleri ./storage/arbitraj.db dosyasına kaydeder.**")
+		fmt.Println("\n ")
+		fmt.Println("2- Pazarama     Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Pazarama 	 envanterini çeker, barkodları temizler (-PZR) ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
+		fmt.Println("3- Ptt AVM      Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Ptt AVM 	 envanterini çeker ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
+		fmt.Println("4- Hepsiburada  Ürünlerini Çek ve DB ile Eşleştir -> **API üzerinden güncel Hepsiburada envanterini çeker ve Master DB'deki karşılıklarını bulup ID'lerini mühürler (yoksa yeni ürün olarak ekler).**")
+		fmt.Println("\n ")
+		fmt.Println("5- Pazarama 	 Kategorileri Çek ve DB'ye Kaydet -> **API üzerinden kategori ağacını çekip Master DB dosyasına kaydeder.**")
+		fmt.Println("6- Ptt AVM 	 Kategorileri Çek ve DB'ye Kaydet -> **API üzerinden kategori ağacını çekip Master DB dosyasına kaydeder.**")
+		fmt.Println("7- Hepsiburada	 Kategorileri Çek ve DB'ye Kaydet -> **API üzerinden kategori ağacını çekip Master DB dosyasına kaydeder.**")
+		fmt.Println("\n ")
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
@@ -275,6 +280,13 @@ func showDatabaseMenu(client *resty.Client, cfg *core.Config, reader *bufio.Read
 				fmt.Println("[!] PTT'den ürün çekilemedi.")
 			}
 
+		case "4":
+
+		case "5":
+			token, _ := services.GetAccessToken(client, cfg.Pazarama.ClientID, cfg.Pazarama.ClientSecret)
+			services.SyncPazaramaCategories(client, token)
+		case "6":
+			services.ListAllPttCategories(client, cfg)
 		case "0":
 			return
 		default:
@@ -384,32 +396,28 @@ func runPttOperation(client *resty.Client, cfg *core.Config, reader *bufio.Reade
 		return
 	}
 
-	// --- VERİTABANI SENKRONİZASYONU ---
 	fmt.Printf("[+] %d ürün yerel veritabanına işleniyor...\n", len(pttList))
 	for _, p := range pttList {
 		cleanBarcode := utils.CleanPttBarcode(p.Barkod)
 
-		localImagePath := ""
-		if p.ResimURL != "" {
-			// Resim indirme hatasını logla ama akışı bozma
-			path, err := utils.DownloadImage(p.ResimURL, p.Barkod)
-			if err == nil {
-				localImagePath = path
+		localImagePath := "" /*
+			if p.ResimURL != "" {
+				path, err := utils.DownloadImage(p.ResimURL, p.Barkod)
+				if err == nil {
+					localImagePath = path
+				}
 			}
-		}
+		*/
 
-		// KDV Dahil Fiyat (PTT genelde KDV'siz ister ama DB'de son fiyatı tutalım)
 		kdvDahilFiyat := p.MevcutFiyat * (1 + float64(p.KdvOrani)/100.0)
 		database.SavePttProduct(cleanBarcode, p.UrunAdi, p.MevcutStok, kdvDahilFiyat, p.Barkod, localImagePath)
 	}
 	fmt.Println("[+] Veritabanı ve resimler güncellendi.")
 
-	// Analiz Excel'ini Oluştur
 	path := utils.SavePttToExcel(pttList)
 	fmt.Printf("\nAnaliz Excel'i Hazır: %s\nLütfen fiyat/stok değişikliklerini yapın, dosyayı KAYDEDİN ve ENTER'a basın...", path)
 	reader.ReadString('\n')
 
-	// --- EXCEL ANALİZ VE GÜNCELLEME ---
 	fmt.Println("[2/3] Excel verileri analiz ediliyor...")
 	rows, err := utils.GetPttExcelRows()
 	if err != nil {
