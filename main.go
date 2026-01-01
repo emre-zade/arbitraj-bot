@@ -21,6 +21,9 @@ import (
 )
 
 func main() {
+
+	fmt.Println("\n" + strings.Repeat("=", 40) + "\n")
+
 	database.InitDB()
 	utils.InitLogger()
 	client := resty.New()
@@ -45,7 +48,7 @@ func ShowMainMenu(client *resty.Client, cfg core.Config, reader *bufio.Reader) {
 		fmt.Println("3- Hepsiburada İşlemleri")
 		fmt.Println("4- Veritabanı ve Genel Ayarlar")
 		fmt.Println("0- Çıkış")
-		fmt.Print("Seçiminiz: ")
+		fmt.Print("\nSeçiminiz: ")
 
 		secim, _ := reader.ReadString('\n')
 		secim = strings.TrimSpace(secim)
@@ -68,7 +71,7 @@ func ShowMainMenu(client *resty.Client, cfg core.Config, reader *bufio.Reader) {
 
 func StartWatcher(client *resty.Client, cfg *core.Config) {
 
-	fmt.Println("[WATCHER] Gözcü başlatıldı. 5 saniyede bir kontroller yapılacak...")
+	log.Println("[WATCHER] Gözcü başlatıldı. 5 saniyede bir kontroller yapılacak...")
 
 	for {
 		dirtyOnes, err := database.GetDirtyProducts()
@@ -83,7 +86,7 @@ func StartWatcher(client *resty.Client, cfg *core.Config) {
 			continue
 		}
 
-		fmt.Printf("\n[WATCHER] %d adet kirli ürün yakalandı. İşlem başlıyor...\n", len(dirtyOnes))
+		log.Printf("\n[WATCHER] %d adet kirli ürün yakalandı. İşlem başlıyor...\n", len(dirtyOnes))
 
 		var wg sync.WaitGroup
 		for _, p := range dirtyOnes {
@@ -95,17 +98,17 @@ func StartWatcher(client *resty.Client, cfg *core.Config) {
 
 				finalPazaramaPrice := prod.Price * prod.PazaramaMarkup
 
-				fmt.Printf("[LOG] %s için HB Fiyatı: %.2f | Pazarama Fiyatı: %.2f\n",
+				log.Printf("[LOG] %s için HB Fiyatı: %.2f | Pazarama Fiyatı: %.2f\n",
 					prod.Barcode, finalHbPrice, finalPazaramaPrice)
 
-				fmt.Printf("[LOG] %s için API güncelleme isteği atılıyor...\n", prod.Barcode)
+				log.Printf("[LOG] %s için API güncelleme isteği atılıyor...\n", prod.Barcode)
 				database.UpdateSyncResult(prod.Barcode, "pazarama", "SUCCESS", "Başarıyla güncellendi")
 			}(p)
 		}
 		wg.Wait()
 
-		fmt.Println("[WATCHER] Mevcut batch tamamlandı. Bir sonraki tarama için 5 saniye bekleniyor...")
-		fmt.Print("Seçiminiz: ")
+		log.Println("[WATCHER] Mevcut batch tamamlandı. Bir sonraki tarama için 5 saniye bekleniyor...")
+		fmt.Print("\nSeçiminiz: ")
 		time.Sleep(5 * time.Second)
 	}
 }

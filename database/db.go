@@ -75,7 +75,8 @@ func InitDB() {
 	CREATE TRIGGER IF NOT EXISTS update_sync_trigger
 	AFTER UPDATE OF 
 		product_name, price, stock, delivery_time, 
-		images, description, brand, category_name 
+		images, description, brand, category_name,
+		hb_markup, pazarama_markup, ptt_markup
 	ON products
 	FOR EACH ROW
 	BEGIN
@@ -93,7 +94,7 @@ func InitDB() {
 	InitBrandTable()
 	InitPazaramaAttributeTable()
 
-	fmt.Println("[LOG] Master Veritabanı ve Otomatik Tetikleyiciler hazır.")
+	log.Println("[LOG] Master Veritabanı ve Otomatik Tetikleyiciler hazır.")
 }
 
 func SyncExcelToMasterDB(products []core.ExcelProduct) {
@@ -295,7 +296,7 @@ func InitGlobalCategoryTables() {
         PRIMARY KEY(platform, category_id)
     );`
 
-	// 2. Senin Master kategorilerini platform ID'lerine bağlayan tablo
+	// 2. Master kategorilerini platform ID'lerine bağlayan tablo
 	sqlMappings := `
     CREATE TABLE IF NOT EXISTS category_mappings (
         master_category_name TEXT PRIMARY KEY, -- Örn: 'Diş Macunu'
@@ -314,7 +315,7 @@ func InitGlobalCategoryTables() {
 		log.Printf("Tablo oluşturma hatası (category_mappings): %v", err)
 	}
 
-	fmt.Println("[LOG] Global kategori tabloları hazır.")
+	log.Println("[LOG] Global kategori tabloları hazır.")
 }
 
 func ClearCategoryMappings() {
