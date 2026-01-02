@@ -189,9 +189,9 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		fmt.Println("3- Ürün İsmi Güncelle (Ticket) -> **Ürün başlığını değiştirmek için talep açar.**")
 		fmt.Println("4- Kategorileri DB ile Senkronize Et -> **Bütün kategorileri çekip DB dosyasına yazar.**")
 		fmt.Println("5- Kategori Ara ve Özellik Analizi -> **Aranan kategori isminin zorunluğu özelliği varsa ekrana yazdırır.**")
-		fmt.Println("6- Excel ile Toplu Ürün Yükle -> **TEST**")
+		fmt.Println("6- Excel ile toplu ürün yükle -> **./storage/urun_listesi.xlsx dosyasındaki ürünleri hepsiburada'ya yeni ürün olarak talep açar.**")
 		fmt.Println("7- Tracking ID ile ürün durumu sorgula -> **Ürün yüklendikten sonra API'den dönen tracking id ile sorgulama yapılabilir.**")
-		fmt.Println("8- Excel ile toplu ürün yükle -> **./storage/urun_listesi.xlsx dosyasındaki ürünleri hepsiburada'ya yeni ürün olarak talep açar.**")
+
 		fmt.Println("0- Ana Menüye Dön")
 
 		s := askInput("\nSeçiminiz: ", reader)
@@ -212,13 +212,12 @@ func showHbMenu(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 		case "5":
 			handleHbCategorySearchAndAnalysis(client, cfg, reader)
 		case "6":
-			handleHbExcelUpload(client, cfg, reader)
+			handleHbBulkExcelUpload(client, cfg, reader)
 		case "7":
 			myReader := bufio.NewReader(os.Stdin)
 			tid := askInput("\nTracking ID giriniz:", myReader)
 			services.CheckHBImportStatus(client, cfg, tid)
-		case "8":
-			handleHbBulkExcelUpload(client, cfg, reader)
+
 		case "0":
 			return
 		default:
@@ -718,7 +717,6 @@ func handlePazaramaMissingUpload(client *resty.Client, cfg *core.Config) {
 func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 	fmt.Println("\n[LOG] Excel dosyası toplu işlem için okunuyor...")
 
-	// Excel'den tüm ürünleri alıyoruz
 	excelProducts, err := utils.ReadProductsFromExcel("./storage/urun_listesi.xlsx")
 	if err != nil {
 		fmt.Printf("[HATA] Excel okunamadı: %v\n", err)
@@ -728,9 +726,8 @@ func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *buf
 	var hbList []core.HBImportProduct
 
 	for _, p := range excelProducts {
-		// Her Excel satırı için bir HB objesi oluşturuyoruz
 		item := core.HBImportProduct{
-			Merchant:   cfg.Hepsiburada.MerchantID, // Senin bulduğun o sihirli anahtar!
+			Merchant:   cfg.Hepsiburada.MerchantID,
 			CategoryID: 24003326,
 			Attributes: map[string]interface{}{
 				"merchantSku":    p.SKU,
@@ -743,14 +740,13 @@ func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *buf
 				"kg":             "1",
 				"Image1":         p.MainImage,
 				"00000MU":        p.MainImage,
-				"price":          p.Price, // Formatlanmış fiyat
-				"stock":          p.Stock, // Tam sayı stok
+				"price":          p.Price,
+				"stock":          p.Stock,
 			},
 		}
 		hbList = append(hbList, item)
 	}
 
-	// Tek seferde fırlat!
 	trackingId, err := services.UploadHBProductsBulk(client, cfg, hbList)
 	if err != nil {
 		fmt.Printf("[HATA] Toplu yükleme başarısız: %v\n", err)
@@ -765,7 +761,6 @@ func handleHbBulkExcelUpload(client *resty.Client, cfg *core.Config, reader *buf
 func handleHbExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.Reader) {
 	fmt.Println("\n[LOG] Excel dosyası analiz ediliyor...")
 
-	// Pazarama Excel yolunu kullanıyoruz
 	products, err := utils.ReadProductsFromExcel("./storage/urun_listesi.xlsx")
 	if err != nil {
 		fmt.Printf("[HATA] Excel okunamadı: %v\n", err)
@@ -777,7 +772,6 @@ func handleHbExcelUpload(client *resty.Client, cfg *core.Config, reader *bufio.R
 		return
 	}
 
-	// Test amaçlı ilk ürünü alalım
 	p := products[0]
 	fmt.Printf("[LOG] Hazırlanan Ürün: %s (%s)\n", p.Title, p.Barcode)
 
@@ -895,7 +889,6 @@ func handleHbFetchProducts(client *resty.Client, cfg *core.Config) {
 		fmt.Printf("%-25.25s %-15s %-10.2f %-10d %-15s\n",
 			p.ProductName, p.HepsiburadaSku, p.Price, p.AvailableStock, imgInfo)
 
-		// İlk görseli konsola yazdır (Olay akışını sevdiğin için)
 		if len(p.Images) > 0 {
 			fmt.Printf("   [İMG] -> %s\n", p.Images[0])
 		}

@@ -137,7 +137,7 @@ func UpdateHBProductName(client *resty.Client, merchantID, secretKey, sku, newNa
 }
 
 func FetchHBProductsWithDetails(client *resty.Client, cfg *core.Config) error {
-	// Döküman Sayfa 12: Mağaza Bazlı Ürün Bilgisi Listeleme (SIT)
+
 	url := "https://product-gateway-sit.hepsiburada.com/api/v2/products/merchant/listings"
 
 	fmt.Printf("[LOG] HB Ürün Bilgileri ve Görseller Çekiliyor: %s\n", url)
@@ -145,7 +145,7 @@ func FetchHBProductsWithDetails(client *resty.Client, cfg *core.Config) error {
 	resp, err := client.R().
 		SetHeader("accept", "application/json").
 		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetQueryParam("merchantId", cfg.Hepsiburada.MerchantID). // Zorunlu
+		SetQueryParam("merchantId", cfg.Hepsiburada.MerchantID).
 		SetQueryParam("page", "0").
 		SetQueryParam("size", "10").
 		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
@@ -159,8 +159,6 @@ func FetchHBProductsWithDetails(client *resty.Client, cfg *core.Config) error {
 		return fmt.Errorf("HB SIT Katalog Hatası (%d): %s", resp.StatusCode(), resp.String())
 	}
 
-	// Gelen veriyi loglamayı sevdiğin için basıyoruz
-	// Bu body artık BOŞ DÖNMEYECEK, çünkü dökümandaki resmi servis bu.
 	fmt.Println("[DEBUG] HB Katalog Verisi:", resp.String())
 
 	return nil
