@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/xuri/excelize/v2"
 )
 
-func FillPazaramaCategoryIDs(filePath string) error {
+// FillPazaramaCategoryIDs artık PazaramaService metodu
+func (s *PazaramaService) FillPazaramaCategoryIDs(filePath string) error {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return err
@@ -26,13 +26,12 @@ func FillPazaramaCategoryIDs(filePath string) error {
 		return err
 	}
 
-	// 1. Excel'deki benzersiz kategorileri toplayalım (H sütunu - Index 7)
 	uniqueCategories := make(map[string]string)
 	for i, row := range rows {
 		if i == 0 || len(row) < 8 {
 			continue
-		} // Başlık ve boş satır kontrolü
-		catName := row[7] // H Sütunu
+		}
+		catName := row[7]
 		if catName != "" {
 			uniqueCategories[catName] = ""
 		}
@@ -40,9 +39,7 @@ func FillPazaramaCategoryIDs(filePath string) error {
 
 	fmt.Printf("[LOG] Excel'de %d adet benzersiz kategori bulundu.\n", len(uniqueCategories))
 
-	// 2. Her benzersiz kategori için ID bulalım
 	for catName := range uniqueCategories {
-		// Önce DB Mappings tablosuna bakalım (Daha önce eşleştirdik mi?)
 		var savedID string
 		err := database.DB.QueryRow("SELECT pazarama_id FROM category_mappings WHERE master_category_name = ?", catName).Scan(&savedID)
 
@@ -52,7 +49,6 @@ func FillPazaramaCategoryIDs(filePath string) error {
 			continue
 		}
 
-		// DB'de yoksa Similarity algoritmasını çalıştıralım
 		matches := utils.FindTopCategoryMatches(catName, "pazarama")
 
 		if len(matches) == 0 {
@@ -61,11 +57,9 @@ func FillPazaramaCategoryIDs(filePath string) error {
 			fmt.Scanln(&manualID)
 			uniqueCategories[catName] = manualID
 		} else if matches[0].Score >= 0.95 {
-			// %95 ve üzeri ise otomatik mühürle
 			uniqueCategories[catName] = matches[0].ID
 			fmt.Printf("[LOG] Otomatik Eşleşti (%%%.0f): %s -> %s\n", matches[0].Score*100, catName, matches[0].Name)
 		} else {
-			// Kararsız kalınan veya düşük skorlu durumlar (Serumlar vb.)
 			fmt.Printf("\n[?] '%s' için en yakın sonuçlar:\n", catName)
 			for i, m := range matches {
 				fmt.Printf("%d. %s (%%%.0f)\n", i+1, m.Name, m.Score*100)
@@ -77,15 +71,13 @@ func FillPazaramaCategoryIDs(filePath string) error {
 			if val, err := strconv.Atoi(choice); err == nil && val <= len(matches) {
 				uniqueCategories[catName] = matches[val-1].ID
 			} else {
-				uniqueCategories[catName] = choice // Kullanıcı direkt ID yapıştırdıysa
+				uniqueCategories[catName] = choice
 			}
 		}
 
-		// Seçilen ID'yi hafızaya (Mappings tablosuna) kaydedelim
 		database.DB.Exec("INSERT OR REPLACE INTO category_mappings (master_category_name, pazarama_id) VALUES (?, ?)", catName, uniqueCategories[catName])
 	}
 
-	// 3. Excel'i güncelleyelim (I sütunu - Index 8)
 	fmt.Println("[LOG] Excel dosyası güncelleniyor...")
 	for i, row := range rows {
 		if i == 0 || len(row) < 8 {
@@ -93,21 +85,16 @@ func FillPazaramaCategoryIDs(filePath string) error {
 		}
 		catName := row[7]
 		if id, ok := uniqueCategories[catName]; ok {
-			cell, _ := excelize.CoordinatesToCellName(9, i+1) // 9. sütun (I)
+			cell, _ := excelize.CoordinatesToCellName(9, i+1)
 			f.SetCellValue(sheetName, cell, id)
 		}
 	}
 
-	// Dosyayı kaydet
-	if err := f.Save(); err != nil {
-		return err
-	}
-
-	fmt.Println("[+] Excel başarıyla güncellendi! 'I' sütunu Pazarama ID'leri ile dolduruldu.")
-	return nil
+	return f.Save()
 }
 
-func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, filePath string, rowIndex int) (string, core.PazaramaProductItem, error) {
+// UploadSingleProductFromExcelPazarama metot haline getirildi, s.Client ve s.Cfg kullanıyor
+func (s *PazaramaService) UploadSingleProductFromExcelPazarama(token string, filePath string, rowIndex int) (string, core.PazaramaProductItem, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return "", core.PazaramaProductItem{}, fmt.Errorf("Excel dosyası açılamadı: %v", err)
@@ -120,7 +107,6 @@ func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, fi
 	}
 
 	p := rows[rowIndex]
-
 	barkod := p[0]
 	urunAdi := p[1]
 	fiyat, _ := strconv.ParseFloat(p[2], 64)
@@ -130,7 +116,8 @@ func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, fi
 	kategoriId := p[8]
 	aciklama := p[9]
 
-	brandId, err := GetBrandIDByName(client, token, markaAdi)
+	// s. üzerinden çağırıyoruz
+	brandId, err := s.GetBrandIDByName(token, markaAdi)
 	if err != nil {
 		return "", core.PazaramaProductItem{}, err
 	}
@@ -142,7 +129,8 @@ func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, fi
 		}
 	}
 
-	defaultAttrs := GetDefaultAttributesFromDB(kategoriId)
+	// s. üzerinden çağırıyoruz
+	defaultAttrs := s.GetDefaultAttributesFromDB(kategoriId)
 
 	productRequest := core.PazaramaProductItem{
 		Code:         barkod,
@@ -163,14 +151,17 @@ func UploadSingleProductFromExcelPazarama(client *resty.Client, token string, fi
 		Attributes:   defaultAttrs,
 	}
 
-	// CreateProductPazarama'yı çağırıp batchID'yi alıyoruz
-	batchID, err := CreateProductPazarama(client, token, productRequest)
-
-	// batchID, oluşturduğumuz productRequest ve hata durumunu beraber dönüyoruz
+	batchID, err := s.CreateProductPazarama(token, productRequest)
 	return batchID, productRequest, err
 }
 
-func BulkUploadPazarama(client *resty.Client, token string, filePath string) error {
+// BulkUploadPazarama artık dışarıdan client/token almıyor, servisten kullanıyor
+func (s *PazaramaService) BulkUploadPazarama(filePath string) error {
+	token, err := s.GetToken()
+	if err != nil {
+		return err
+	}
+
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return fmt.Errorf("excel dosyası açılamadı: %v", err)
@@ -185,20 +176,16 @@ func BulkUploadPazarama(client *resty.Client, token string, filePath string) err
 	var batch []core.PazaramaProductItem
 	const chunkSize = 100
 	totalRows := len(rows)
-
-	// Bu çalışma süresince hangi kategorilerin kontrol edildiğini tutalım (API'yi yormamak için)
 	checkedCategories := make(map[string]bool)
 
-	fmt.Printf("\n[BULK] Operasyon Başlıyor: Toplam %d ürün, %d'erli paketler halinde...\n", totalRows-1, chunkSize)
+	fmt.Printf("\n[BULK] Operasyon Başlıyor: Toplam %d ürün...\n", totalRows-1)
 
 	for i := 1; i < totalRows; i++ {
 		p := rows[i]
-		// Boş satır veya eksik veri kontrolü
 		if len(p) < 9 || p[0] == "" {
 			continue
 		}
 
-		// Excel verilerini oku
 		barkod := p[0]
 		urunAdi := p[1]
 		fiyat, _ := strconv.ParseFloat(p[2], 64)
@@ -208,23 +195,16 @@ func BulkUploadPazarama(client *resty.Client, token string, filePath string) err
 		kategoriId := p[8]
 		aciklama := p[9]
 
-		// 1. Marka ID (Hafızadan veya API'den)
-		brandId, _ := GetBrandIDByName(client, token, markaAdi)
+		brandId, _ := s.GetBrandIDByName(token, markaAdi)
+		defaultAttrs := s.GetDefaultAttributesFromDB(kategoriId)
 
-		// 2. Akıllı Özellik Yönetimi (Zorunlu Alanlar)
-		defaultAttrs := GetDefaultAttributesFromDB(kategoriId)
-
-		// Eğer DB'de bu kategori için özellik yoksa ve daha önce bu turda kontrol edilmediyse
 		if len(defaultAttrs) == 0 && !checkedCategories[kategoriId] {
-			fmt.Printf("\n[LOG] %s kategorisi DB'de bulunamadı. Zorunlu alanlar Pazarama'dan öğreniliyor...\n", kategoriId)
-			AutoMapMandatoryAttributes(client, token, kategoriId)
-			checkedCategories[kategoriId] = true // Bu kategoriyi kontrol edildi olarak işaretle
-
-			// Öğrendikten sonra DB'den tekrar çek
-			defaultAttrs = GetDefaultAttributesFromDB(kategoriId)
+			fmt.Printf("\n[LOG] %s kategorisi analiz ediliyor...\n", kategoriId)
+			s.AutoMapMandatoryAttributes(token, kategoriId)
+			checkedCategories[kategoriId] = true
+			defaultAttrs = s.GetDefaultAttributesFromDB(kategoriId)
 		}
 
-		// 3. Görselleri Hazırla
 		var images []core.PazaramaImage
 		for imgIdx := 10; imgIdx <= 17; imgIdx++ {
 			if imgIdx < len(p) && p[imgIdx] != "" {
@@ -232,8 +212,7 @@ func BulkUploadPazarama(client *resty.Client, token string, filePath string) err
 			}
 		}
 
-		// 4. Ürünü Pakete Ekle
-		item := core.PazaramaProductItem{
+		batch = append(batch, core.PazaramaProductItem{
 			Code:         barkod,
 			Name:         urunAdi,
 			DisplayName:  urunAdi,
@@ -248,50 +227,36 @@ func BulkUploadPazarama(client *resty.Client, token string, filePath string) err
 			Attributes:   defaultAttrs,
 			Images:       images,
 			CurrencyType: "TRY",
-		}
+		})
 
-		batch = append(batch, item)
-
-		// 5. 100 Ürüne Ulaşıldıysa veya Dosya Bittiyse Gönder
 		if len(batch) == chunkSize || i == totalRows-1 {
-			fmt.Printf("\n[PROS] Paket Hazırlandı: %d ürün gönderiliyor (Satır: %d/%d)...\n", len(batch), i, totalRows-1)
-
-			// Toplu Gönderim Fonksiyonu
-			batchID, err := SendBatchToPazarama(client, token, batch)
+			batchID, err := s.SendBatchToPazarama(token, batch)
 			if err != nil {
-				msg := fmt.Sprintf("[HATA] Satır %d civarı paket gönderilemedi: %v", i, err)
-				fmt.Println(msg)
-				utils.WriteToLogFile(msg)
+				utils.WriteToLogFile(fmt.Sprintf("[HATA] Paket gönderilemedi: %v", err))
 			} else {
-				msg := fmt.Sprintf("[OK] Satır %d civarı paket kuyruğa alındı. BatchID: %s", i, batchID)
-				fmt.Println(msg)
-				utils.WriteToLogFile(msg)
-
-				// DİKKAT: batch slice'ını Watcher'a kopyalayarak gönderiyoruz
-				// (Aksi halde loop temizlediği için watcher boş liste görür)
+				utils.WriteToLogFile(fmt.Sprintf("[OK] Paket kuyruğa alındı: %s", batchID))
 				tempBatch := make([]core.PazaramaProductItem, len(batch))
 				copy(tempBatch, batch)
-
-				go WatchBatchStatus(client, token, batchID, tempBatch) // tempBatch eklendi
+				go s.WatchBatchStatus(token, batchID, tempBatch)
 			}
-
-			// Listeyi temizle ve bir sonraki 100'lüye geç
 			batch = []core.PazaramaProductItem{}
-
-			// API limitlerine takılmamak ve sistemin nefes alması için kısa mola
-			time.Sleep(3 * time.Second)
+			time.Sleep(2 * time.Second)
 		}
 	}
 
-	fmt.Println("\n[FINAL] Tüm paketler iletildi. Watcher'lar arka planda sonuçları raporlayacak.")
 	return nil
 }
 
-func UploadMissingProductsPazarama(client *resty.Client, token string, originalPath string, missingPath string) error {
-	// 1. Eksik Barkodları Map'e Oku
+// UploadMissingProductsPazarama metot haline getirildi
+func (s *PazaramaService) UploadMissingProductsPazarama(originalPath string, missingPath string) error {
+	token, err := s.GetToken()
+	if err != nil {
+		return err
+	}
+
 	fMissing, err := excelize.OpenFile(missingPath)
 	if err != nil {
-		return fmt.Errorf("eksik ürünler dosyası açılamadı: %v", err)
+		return err
 	}
 	defer fMissing.Close()
 
@@ -306,49 +271,34 @@ func UploadMissingProductsPazarama(client *resty.Client, token string, originalP
 			missingMap[barcode] = true
 		}
 	}
-	fmt.Printf("[LOG] %d adet eksik barkod hafızaya alındı.\n", len(missingMap))
 
-	// 2. Orijinal Dosyayı Oku
 	fOrig, err := excelize.OpenFile(originalPath)
-	if err != nil {
-		return fmt.Errorf("orijinal dosya açılamadı: %v", err)
-	}
-	defer fOrig.Close()
-
-	rows, err := fOrig.GetRows(fOrig.GetSheetName(0))
 	if err != nil {
 		return err
 	}
+	defer fOrig.Close()
 
+	rows, _ := fOrig.GetRows(fOrig.GetSheetName(0))
 	var batch []core.PazaramaProductItem
 	checkedCats := make(map[string]bool)
-	processedCount := 0
 
 	for i := 1; i < len(rows); i++ {
 		p := rows[i]
 		if len(p) < 9 || p[0] == "" {
 			continue
 		}
-
 		barcode := strings.TrimSpace(p[0])
 		if !missingMap[barcode] {
 			continue
 		}
 
-		// Marka Kontrolü
-		brandId, err := GetBrandIDByName(client, token, p[6])
-		if err != nil {
-			utils.WriteToLogFile(fmt.Sprintf("Satır %d ATLANIYOR: %s markası bulunamadı.", i, p[6]))
-			continue
-		}
-
-		// Kategori & Özellik Kontrolü
+		brandId, _ := s.GetBrandIDByName(token, p[6])
 		kategoriId := p[8]
-		defaultAttrs := GetDefaultAttributesFromDB(kategoriId)
+		defaultAttrs := s.GetDefaultAttributesFromDB(kategoriId)
 		if len(defaultAttrs) == 0 && !checkedCats[kategoriId] {
-			AutoMapMandatoryAttributes(client, token, kategoriId)
+			s.AutoMapMandatoryAttributes(token, kategoriId)
 			checkedCats[kategoriId] = true
-			defaultAttrs = GetDefaultAttributesFromDB(kategoriId)
+			defaultAttrs = s.GetDefaultAttributesFromDB(kategoriId)
 		}
 
 		item := core.PazaramaProductItem{
@@ -364,7 +314,6 @@ func UploadMissingProductsPazarama(client *resty.Client, token string, originalP
 			VatRate:      utils.StringToInt(p[3]),
 			CategoryId:   kategoriId,
 			Attributes:   defaultAttrs,
-			Images:       []core.PazaramaImage{},
 			CurrencyType: "TRY",
 		}
 
@@ -375,27 +324,17 @@ func UploadMissingProductsPazarama(client *resty.Client, token string, originalP
 		}
 
 		batch = append(batch, item)
-		processedCount++
 
-		// Paket Gönderimi
 		if len(batch) == 50 || i == len(rows)-1 {
-			if len(batch) > 0 {
-				fmt.Printf("\n[PROS] %d eksik ürünlük paket gönderiliyor...\n", len(batch))
-				batchID, err := SendBatchToPazarama(client, token, batch)
-				if err == nil {
-					utils.WriteToLogFile(fmt.Sprintf("Paket gonderildi: %s", batchID))
-
-					// --- GÜVENLİ KOPYALAMA ---
-					tempBatch := make([]core.PazaramaProductItem, len(batch))
-					copy(tempBatch, batch)
-					go WatchBatchStatus(client, token, batchID, tempBatch)
-					// -------------------------
-				}
-				batch = []core.PazaramaProductItem{}
-				time.Sleep(3 * time.Second)
+			batchID, err := s.SendBatchToPazarama(token, batch)
+			if err == nil {
+				tempBatch := make([]core.PazaramaProductItem, len(batch))
+				copy(tempBatch, batch)
+				go s.WatchBatchStatus(token, batchID, tempBatch)
 			}
+			batch = []core.PazaramaProductItem{}
+			time.Sleep(2 * time.Second)
 		}
 	}
-	fmt.Printf("\n[FINAL] Toplam %d ürün yeniden denendi.\n", processedCount)
 	return nil
 }

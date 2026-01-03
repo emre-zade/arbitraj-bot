@@ -12,22 +12,70 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func FetchHBProducts(client *resty.Client, cfg *core.Config) ([]core.HBProduct, error) {
-	url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s", cfg.Hepsiburada.MerchantID)
+// HBService Hepsiburada operasyonlarını yöneten ana yapı
+type HBService struct {
+	Client *resty.Client
+	Cfg    *core.Config
+}
+
+// NewHBService servisi gerekli bağımlılıklarla başlatır
+func NewHBService(client *resty.Client, cfg *core.Config) *HBService {
+	return &HBService{
+		Client: client,
+		Cfg:    cfg,
+	}
+}
+
+// SyncProducts Hepsiburada'dan ürünleri çeker ve merkezi DB'ye kaydeder
+func (s *HBService) SyncProducts() error {
+	fmt.Println("[HB] Ürün senkronizasyonu başlatılıyor...")
+
+	// API'den ham listeyi çekiyoruz
+	listings, err := s.fetchFromAPI()
+	if err != nil {
+		return err
+	}
+
+	for _, hbProd := range listings {
+		// Log tutmayı sevdiğin için akışı konsola yazıyoruz
+		fmt.Printf("[HB-AKIS] İşleniyor: %s | Fiyat: %.2f\n", hbProd.MerchantSku, hbProd.Price)
+
+		// Hepsiburada'dan gelen veriyi merkezi core.Product modeline dönüştürüyoruz
+		p := core.Product{
+			Barcode:      hbProd.MerchantSku,
+			ProductName:  hbProd.ProductName,
+			HbSku:        hbProd.HepsiburadaSku,
+			Price:        hbProd.Price,
+			Stock:        hbProd.AvailableStock,
+			HbSyncStatus: "SYNCED",
+			IsDirty:      0,
+		}
+
+		// Yeni oluşturduğumuz merkezi fonksiyonla kayıt yapıyoruz
+		database.SaveProduct(p)
+	}
+
+	fmt.Printf("[OK] %d adet Hepsiburada ürünü sisteme işlendi.\n", len(listings))
+	return nil
+}
+
+// getListFromAPI Hepsiburada API'sine bağlanıp ham veriyi getiren yardımcı fonksiyon
+func (s *HBService) fetchFromAPI() ([]core.HBProduct, error) {
+	url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s", s.Cfg.Hepsiburada.MerchantID)
 
 	var apiResponse core.HBListingResponse
 
-	_, err := client.R().
+	_, err := s.Client.R().
 		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
 		SetQueryParam("offset", "0").
 		SetQueryParam("limit", "10").
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
 		SetResult(&apiResponse).
 		Get(url)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("HB API bağlantı hatası: %v", err)
 	}
 
 	return apiResponse.Listings, nil
@@ -164,6 +212,7 @@ func FetchHBProductsWithDetails(client *resty.Client, cfg *core.Config) error {
 	return nil
 }
 
+/*
 func GetHBCategories(client *resty.Client, cfg *core.Config) ([]core.HBCategory, error) {
 
 	url := "https://mpop-sit.hepsiburada.com/product/api/categories/get-all-categories"
@@ -212,6 +261,7 @@ func GetHBCategories(client *resty.Client, cfg *core.Config) ([]core.HBCategory,
 
 	return result.Data, nil
 }
+*/
 
 func GetHBCategoryAttributes(client *resty.Client, cfg *core.Config, catID string) ([]core.HBAttribute, error) {
 	url := fmt.Sprintf("https://mpop-sit.hepsiburada.com/product/api/categories/%s/attributes", catID)
@@ -276,16 +326,17 @@ func GetHBAttributeValues(client *resty.Client, cfg *core.Config, catID string, 
 	return result.Data, nil
 }
 
-func SyncHBCategories(client *resty.Client, cfg *core.Config) error {
-	categories, err := GetHBCategories(client, cfg)
-	if err != nil {
-		return err
+/*
+	func SyncHBCategories(client *resty.Client, cfg *core.Config) error {
+		categories, err := GetHBCategories(client, cfg)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[LOG] %d adet kategori bulundu, DB'ye işleniyor...\n", len(categories))
+		return database.SavePlatformCategories("hb", categories)
 	}
-
-	fmt.Printf("[LOG] %d adet kategori bulundu, DB'ye işleniyor...\n", len(categories))
-	return database.SavePlatformCategories("hb", categories)
-}
-
+*/
 func UploadHBProduct(client *resty.Client, cfg *core.Config, product core.HBImportProduct) error {
 	url := "https://mpop-sit.hepsiburada.com/product/api/products/import"
 

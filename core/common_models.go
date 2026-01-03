@@ -112,14 +112,12 @@ type MasterProduct struct {
 }
 
 // --- GLOBAL KATEGORİ MODELLERİ (Merkezi Sistem İçin) ---
-
-// PlatformCategory: DB'deki 'platform_categories' tablosunu temsil eder
 type PlatformCategory struct {
-	Platform     string // 'ptt', 'pazarama', 'hb'
-	CategoryID   string // Platformun verdiği ID
-	CategoryName string // Platformun verdiği isim
-	ParentID     string // Üst kategori ID'si
-	IsLeaf       bool   // En alt kategori mi? (Ürün yüklenebilir mi?)
+	Platform     string `json:"platform"`      // 'ptt', 'pazarama', 'hb'
+	CategoryID   string `json:"category_id"`   // Platformun verdiği ID
+	CategoryName string `json:"category_name"` // Platformun verdiği isim
+	ParentID     string `json:"parent_id"`     // Üst kategori ID'si
+	IsLeaf       bool   `json:"is_leaf"`       // En alt kategori mi?
 }
 
 // CategoryMapping: Senin Master kategorilerini platform ID'lerine bağlar

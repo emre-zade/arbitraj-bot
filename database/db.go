@@ -97,86 +97,6 @@ func InitDB() {
 	log.Println("[LOG] Master Veritabanı ve Otomatik Tetikleyiciler hazır.")
 }
 
-func SyncExcelToMasterDB(products []core.ExcelProduct) {
-	fmt.Printf("[DB] %d ürün master tabloya işleniyor...\n", len(products))
-
-	for _, p := range products {
-		// SQL tarafındaki sütun sıralaması:
-		query := `
-        INSERT INTO products (
-            barcode, product_name, brand, category_name, description, 
-            price, vat_rate, stock, delivery_time, images, is_dirty
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) -- 10 adet soru işareti
-        ON CONFLICT(barcode) DO UPDATE SET
-            product_name = excluded.product_name,
-            brand = excluded.brand,
-            category_name = excluded.category_name,
-            description = excluded.description,
-            price = excluded.price,
-            vat_rate = excluded.vat_rate,
-            stock = excluded.stock,
-            delivery_time = excluded.delivery_time,
-            images = excluded.images,
-            is_dirty = 1,
-            updated_at = CURRENT_TIMESTAMP;`
-
-		_, err := DB.Exec(query,
-			p.Barcode,      // 1. ?
-			p.Title,        // 2. ?
-			p.Brand,        // 3. ?
-			p.CategoryName, // 4. ?
-			p.Description,  // 5. ?
-			p.Price,        // 6. ?
-			p.VatRate,      // 7. ?
-			p.Stock,        // 8. ?
-			p.DeliveryTime, // 9. ?
-			p.MainImage,    // 10. ?
-		)
-
-		if err != nil {
-			log.Printf("[HATA] DB Kayıt (%s): %v", p.Barcode, err)
-		}
-	}
-	fmt.Println("[OK] Senkronizasyon tamamlandı.")
-}
-
-func SavePttProduct(barcode, name string, stock int, price float64, originalBarcode string, imagePath string) {
-	// Bu sorgu: Eğer barkod varsa sadece PTT bilgilerini günceller, pazarama_code veya hb_sku'ya dokunmaz.
-	query := `
-	INSERT INTO products (barcode, product_name, stock, price, delivery_time, ptt_barcode, image_path, updated_at) 
-	VALUES (?, ?, ?, ?, 3, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(barcode) DO UPDATE SET
-		product_name = excluded.product_name,
-		stock = excluded.stock,
-		price = excluded.price,
-		ptt_barcode = excluded.ptt_barcode,
-		image_path = CASE WHEN excluded.image_path != '' THEN excluded.image_path ELSE products.image_path END,
-		updated_at = CURRENT_TIMESTAMP;`
-
-	_, err := DB.Exec(query, barcode, name, stock, price, originalBarcode, imagePath)
-	if err != nil {
-		log.Printf("DB PTT Kayıt Hatası: %v", err)
-	}
-}
-
-func SavePazaramaProduct(barcode, name string, stock int, price float64) {
-	// Pazarama barkodu ana barcode ile aynıdır.
-	// Eğer ürün yoksa yeni açar, varsa pazarama_code sütununu doldurur.
-	query := `
-	INSERT INTO products (barcode, product_name, stock, price, delivery_time, pazarama_code, updated_at) 
-	VALUES (?, ?, ?, ?, 3, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(barcode) DO UPDATE SET
-		pazarama_code = excluded.barcode, -- Pazarama tarafında var olduğunu işaretler
-		stock = excluded.stock,
-		price = excluded.price,
-		updated_at = CURRENT_TIMESTAMP;`
-
-	_, err := DB.Exec(query, barcode, name, stock, price, barcode)
-	if err != nil {
-		log.Printf("DB Pazarama Kayıt Hatası: %v", err)
-	}
-}
-
 func UpdateProductImage(barcode string, imagePath string) {
 	query := `UPDATE products SET image_path = ? WHERE barcode = ?`
 	_, err := DB.Exec(query, imagePath, barcode)
@@ -185,62 +105,20 @@ func UpdateProductImage(barcode string, imagePath string) {
 	}
 }
 
-func UpdatePttStockPriceInDB(barcode string, stock int, price float64) {
-	query := `UPDATE products SET stock = ?, price = ?, updated_at = CURRENT_TIMESTAMP WHERE barcode = ?`
-	_, err := DB.Exec(query, stock, price, barcode)
-	if err != nil {
-		log.Printf("[-] DB Güncelleme Hatası (%s): %v", barcode, err)
-	}
-}
-
-func SaveHbProduct(sku, barcode, productName string, stock int, price float64) {
-	if barcode == "" {
-		barcode = sku
-	}
-
+func SavePlatformCategories(platform, parentID, parentName, catID, catName string, isLeaf bool) {
 	query := `
-	INSERT INTO products (barcode, product_name, hb_sku, stock, price, updated_at) 
-	VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(hb_sku) DO UPDATE SET
-		barcode = excluded.barcode,
-		product_name = excluded.product_name,
-		stock = excluded.stock,
-		price = excluded.price,
-		updated_at = CURRENT_TIMESTAMP;`
-
-	_, err := DB.Exec(query, barcode, productName, sku, stock, price)
+		INSERT INTO platform_categories (platform, parent_id, parent_name, category_id, category_name, is_leaf)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(platform, category_id) DO UPDATE SET
+			parent_id = excluded.parent_id,
+			parent_name = excluded.parent_name,
+			category_name = excluded.category_name,
+			is_leaf = excluded.is_leaf
+	`
+	_, err := DB.Exec(query, platform, parentID, parentName, catID, catName, isLeaf)
 	if err != nil {
-		log.Printf("[-] DB Kayıt Hatası (SKU: %s): %v", sku, err)
+		log.Printf("[DB-HATA] Kategori kaydedilemedi: %v", err)
 	}
-}
-
-func SavePlatformCategories(platform string, categories []core.HBCategory) error {
-	tx, err := DB.Begin()
-	if err != nil {
-		return err
-	}
-
-	// Senin tablonun kolonlarına göre INSERT
-	stmt, _ := tx.Prepare(`
-		INSERT OR REPLACE INTO platform_categories 
-		(platform, category_id, category_name, parent_id, is_leaf) 
-		VALUES (?, ?, ?, ?, ?)
-	`)
-
-	for _, c := range categories {
-		// ParentID'yi string'e çeviriyoruz (Tablonda TEXT olduğu için)
-		parentID := strconv.Itoa(c.ParentCategoryId)
-		catID := strconv.Itoa(c.CategoryID)
-
-		fmt.Printf("[DB-LOG] İşleniyor: %s (ID: %s, Parent: %s)\n", c.Name, catID, parentID)
-
-		_, err = stmt.Exec(platform, catID, c.Name, parentID, c.Leaf)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func SearchPlatformCategory(platform, keyword string) ([]core.HBCategory, error) {
@@ -450,4 +328,69 @@ func UpdateSyncResult(barcode string, platform string, status string, message st
 	} else {
 		log.Printf("[DB OK] %s için %s durumu kaydedildi ve is_dirty=0 yapıldı.", barcode, platform)
 	}
+}
+
+func SaveProduct(p core.Product) {
+
+	fmt.Printf("[DB] Ürün İşleniyor -> Barkod: %s | İsim: %s\n", p.Barcode, p.ProductName)
+
+	query := `
+    INSERT INTO products (
+        barcode, product_name, brand, category_name, description, 
+        price, vat_rate, stock, delivery_time, images, is_dirty,
+        hb_sku, hb_sync_status, hb_sync_message,
+        pazarama_id, pazarama_sync_status, pazarama_sync_message,
+        ptt_id, ptt_sync_status, ptt_sync_message,
+        hb_markup, pazarama_markup, ptt_markup
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(barcode) DO UPDATE SET
+        product_name = COALESCE(NULLIF(excluded.product_name, ''), products.product_name),
+        brand = COALESCE(NULLIF(excluded.brand, ''), products.brand),
+        category_name = COALESCE(NULLIF(excluded.category_name, ''), products.category_name),
+        description = COALESCE(NULLIF(excluded.description, ''), products.description),
+        price = CASE WHEN excluded.price > 0 THEN excluded.price ELSE products.price END,
+        stock = excluded.stock,
+        images = COALESCE(NULLIF(excluded.images, ''), products.images),
+        hb_sku = COALESCE(NULLIF(excluded.hb_sku, ''), products.hb_sku),
+        pazarama_id = COALESCE(NULLIF(excluded.pazarama_id, ''), products.pazarama_id),
+        ptt_id = COALESCE(NULLIF(excluded.ptt_id, ''), products.ptt_id),
+        is_dirty = 1,
+        updated_at = CURRENT_TIMESTAMP;`
+
+	_, err := DB.Exec(query,
+		p.Barcode, p.ProductName, p.Brand, p.CategoryName, p.Description,
+		p.Price, p.VatRate, p.Stock, p.DeliveryTime, p.Images,
+		p.HbSku, p.HbSyncStatus, p.HbSyncMessage,
+		p.PazaramaId, p.PazaramaSyncStatus, p.PazaramaSyncMessage,
+		p.PttId, p.PttSyncStatus, p.PttSyncMessage,
+		p.HbMarkup, p.PazaramaMarkup, p.PttMarkup,
+	)
+
+	if err != nil {
+		log.Printf("[HATA] DB Kayıt İşlemi Başarısız (%s): %v", p.Barcode, err)
+		return
+	}
+
+	fmt.Printf("[DB] İşlem Tamamlandı: %s\n", p.Barcode)
+}
+
+func SyncExcelToDB(products []core.ExcelProduct) {
+	fmt.Printf("[EXCEL] %d ürün işleniyor...\n", len(products))
+
+	for _, ep := range products {
+		p := core.Product{
+			Barcode:      ep.Barcode,
+			ProductName:  ep.Title,
+			Brand:        ep.Brand,
+			CategoryName: ep.CategoryName,
+			Description:  ep.Description,
+			Price:        ep.Price,
+			VatRate:      ep.VatRate,
+			Stock:        ep.Stock,
+			DeliveryTime: ep.DeliveryTime,
+			Images:       ep.MainImage,
+		}
+		SaveProduct(p)
+	}
+	fmt.Println("[OK] Excel verileri başarıyla sisteme işlendi.")
 }

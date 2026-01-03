@@ -14,112 +14,45 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-func GetAccessToken(client *resty.Client, cid, secret string) (string, error) {
-	var authRes core.PazaramaAuthResponse
-	resp, err := client.R().
-		SetHeader("Content-Type", "application/x-www-form-urlencoded").
-		SetBasicAuth(cid, secret).
-		SetFormData(map[string]string{"grant_type": "client_credentials"}).
-		SetResult(&authRes).
-		Post("https://isortagimgiris.pazarama.com/connect/token")
-	if err != nil || !resp.IsSuccess() {
-		return "", fmt.Errorf("auth hatası")
-	}
-	return authRes.Data.AccessToken, nil
+// PazaramaService Pazarama operasyonlarını yöneten ana yapı
+type PazaramaService struct {
+	Client *resty.Client
+	Cfg    *core.Config
 }
 
-func FetchProducts(client *resty.Client, token string) ([]core.PazaramaProduct, error) {
-	var allProducts []core.PazaramaProduct
-	page := 1
-	size := 100 // Güvenli ve standart limit
-
-	for {
-		fmt.Printf("[LOG] Pazarama ürünleri çekiliyor: Sayfa %d...\n", page)
-		var result core.PazaramaProductResponse
-		resp, err := client.R().
-			SetAuthToken(token).
-			SetQueryParams(map[string]string{
-				"Approved": "true",
-				"Page":     fmt.Sprintf("%d", page),
-				"Size":     fmt.Sprintf("%d", size),
-			}).
-			SetResult(&result).
-			Get("https://isortagimapi.pazarama.com/product/products")
-
-		if err != nil {
-			return nil, err
-		}
-
-		if !resp.IsSuccess() || !result.Success {
-			break
-		}
-
-		// Eğer gelen veri boşsa tüm ürünler çekilmiştir
-		if len(result.Data) == 0 {
-			break
-		}
-
-		allProducts = append(allProducts, result.Data...)
-
-		// Gelen ürün sayısı 'size' değerinden azsa son sayfadayız demektir
-		if len(result.Data) < size {
-			break
-		}
-
-		page++
-
-		time.Sleep(1 * time.Second)
+// NewPazaramaService servisi gerekli bağımlılıklarla başlatır
+func NewPazaramaService(client *resty.Client, cfg *core.Config) *PazaramaService {
+	return &PazaramaService{
+		Client: client,
+		Cfg:    cfg,
 	}
-
-	return allProducts, nil
 }
 
-func SyncPazaramaCategories(client *resty.Client, token string) error {
+func (s *PazaramaService) SyncCategories(token string) error {
 	var result core.PazaramaCategoryResponse
-
-	fmt.Println("[LOG] Pazarama kategori ağacı çekiliyor...")
-
-	resp, err := client.R().
+	log.Println("[LOG] Pazarama kategori ağacı çekiliyor...")
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetResult(&result).
 		Get("https://isortagimapi.pazarama.com/category/getCategoryTree")
-
-	if err != nil {
-		return fmt.Errorf("Pazarama API bağlantı hatası: %v", err)
+	if err != nil || !resp.IsSuccess() || !result.Success {
+		return fmt.Errorf("Kategori çekilemedi")
 	}
-	if !resp.IsSuccess() {
-		fmt.Printf("[HATA] Pazarama API Status: %d | Body: %s\n", resp.StatusCode(), resp.String())
-		return fmt.Errorf("Pazarama API başarısız yanıt döndürdü (Status: %d)", resp.StatusCode())
-	}
-
-	if !result.Success {
-		return fmt.Errorf("Pazarama İşlem Hatası: %s", result.Message)
-	}
-
-	fmt.Println("[LOG] Kategoriler veritabanına işleniyor...")
-	savePazaramaCategoryRecursive(result.Data, "0")
-
-	fmt.Printf("[LOG] Toplam Pazarama kategorisi senkronize edildi.\n")
+	s.saveCategoryRecursive(result.Data, "0", "ROOT")
+	log.Printf("[LOG] Pazarama'dan toplam %d kategori çekildi.", len(result.Data))
 	return nil
 }
 
-func savePazaramaCategoryRecursive(categories []core.PazaramaCategory, parentID string) {
+func (s *PazaramaService) saveCategoryRecursive(categories []core.PazaramaCategory, parentID string, parentName string) {
 	for _, cat := range categories {
-
-		query := `INSERT OR REPLACE INTO platform_categories (platform, category_id, category_name, parent_id, is_leaf) 
-                  VALUES ('pazarama', ?, ?, ?, ?)`
-		_, err := database.DB.Exec(query, cat.ID, cat.Name, parentID, cat.IsLeaf)
-		if err != nil {
-			log.Printf("Kategori kaydedilemedi (%s): %v", cat.Name, err)
-		}
-
+		database.SavePlatformCategory("pazarama", parentID, parentName, cat.ID, cat.Name, cat.IsLeaf)
 		if len(cat.Children) > 0 {
-			savePazaramaCategoryRecursive(cat.Children, cat.ID)
+			s.saveCategoryRecursive(cat.Children, cat.ID, cat.Name)
 		}
 	}
 }
 
-func CreateProductPazarama(client *resty.Client, token string, product core.PazaramaProductItem) (string, error) {
+func (s *PazaramaService) CreateProductPazarama(token string, product core.PazaramaProductItem) (string, error) {
 	request := core.PazaramaCreateProductRequest{
 		Products: []core.PazaramaProductItem{product},
 	}
@@ -132,7 +65,7 @@ func CreateProductPazarama(client *resty.Client, token string, product core.Paza
 		Success bool `json:"success"`
 	}
 
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetBody(request).
 		SetResult(&apiResult). // Burası sonucu apiResult'a doldurur
@@ -157,7 +90,7 @@ func CreateProductPazarama(client *resty.Client, token string, product core.Paza
 	return apiResult.Data.BatchRequestId, nil
 }
 
-func GetBrandIDByName(client *resty.Client, token string, brandName string) (string, error) {
+func (s *PazaramaService) GetBrandIDByName(token string, brandName string) (string, error) {
 	// 1. Temizlik ve Normalizasyon (Tüm sorguları büyük harf üzerinden yapacağız)
 	brandName = strings.TrimSpace(brandName)
 	normalizedName := strings.ToUpper(brandName)
@@ -175,7 +108,7 @@ func GetBrandIDByName(client *resty.Client, token string, brandName string) (str
 	fmt.Printf("[LOG] Marka API'den aranıyor: '%s'\n", brandName)
 
 	var result core.PazaramaBrandResponse
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetQueryParam("Page", "1").
 		SetQueryParam("Size", "50").
@@ -214,7 +147,7 @@ func GetBrandIDByName(client *resty.Client, token string, brandName string) (str
 	return "", fmt.Errorf("Tam eşleşme sağlanamadı")
 }
 
-func SyncPazaramaBrands(client *resty.Client, token string) error {
+func (s *PazaramaService) SyncPazaramaBrands(token string) error {
 	fmt.Println("\n[LOG] --- PAZARAMA MARKA SENKRONİZASYONU BAŞLADI ---")
 	page := 1
 	pageSize := 100
@@ -223,7 +156,7 @@ func SyncPazaramaBrands(client *resty.Client, token string) error {
 	for {
 		fmt.Printf("[LOG] Sayfa %d çekiliyor...\n", page)
 		var result core.PazaramaBrandResponse
-		resp, err := client.R().
+		resp, err := s.Client.R().
 			SetAuthToken(token).
 			SetQueryParam("Page", strconv.Itoa(page)).
 			SetQueryParam("Size", strconv.Itoa(pageSize)).
@@ -239,11 +172,10 @@ func SyncPazaramaBrands(client *resty.Client, token string) error {
 		}
 
 		if len(result.Data) == 0 {
-			break // Veri bitti, döngüden çık
+			break
 		}
 
-		// Gelen markaları DB'ye gömelim
-		tx, _ := database.DB.Begin() // Hız için transaction kullanalım
+		tx, _ := database.DB.Begin()
 		for _, b := range result.Data {
 			_, err := tx.Exec("INSERT OR REPLACE INTO platform_brands (platform, brand_id, brand_name) VALUES ('pazarama', ?, ?)", b.ID, b.Name)
 			if err != nil {
@@ -255,21 +187,23 @@ func SyncPazaramaBrands(client *resty.Client, token string) error {
 		totalSaved += len(result.Data)
 		fmt.Printf("[LOG] Sayfa %d tamamlandı (%d marka eklendi).\n", page, len(result.Data))
 
-		// Eğer gelen veri pageSize'dan azsa son sayfaya gelmişizdir
 		if len(result.Data) < pageSize {
 			break
 		}
+
 		page++
+
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	fmt.Printf("[OK] Senkronizasyon bitti. Toplam %d marka lokal hafızaya alındı.\n", totalSaved)
 	return nil
 }
 
-func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string) {
+func (s *PazaramaService) CheckPazaramaBatchStatus(token string, batchID string) {
 	fmt.Printf("\n[LOG] --- BATCH SORGULANIYOR: %s ---\n", batchID)
 
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetQueryParam("BatchRequestId", batchID).
 		Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
@@ -282,7 +216,7 @@ func CheckPazaramaBatchStatus(client *resty.Client, token string, batchID string
 	fmt.Printf("[LOG] HTTP: %d | Yanıt: %s\n", resp.StatusCode(), resp.String())
 }
 
-func WatchBatchStatus(client *resty.Client, token string, batchID string, items []core.PazaramaProductItem) {
+func (s *PazaramaService) WatchBatchStatus(token string, batchID string, items []core.PazaramaProductItem) {
 	startTime := time.Now()
 
 	// Paket özeti hazırlayalım
@@ -311,7 +245,7 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string, items 
 			Success bool `json:"success"`
 		}
 
-		client.R().SetAuthToken(token).SetQueryParam("BatchRequestId", batchID).SetResult(&result).Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
+		s.Client.R().SetAuthToken(token).SetQueryParam("BatchRequestId", batchID).SetResult(&result).Get("https://isortagimapi.pazarama.com/product/getProductBatchResult")
 
 		if result.Success {
 			if result.Data.Status == 1 {
@@ -337,11 +271,11 @@ func WatchBatchStatus(client *resty.Client, token string, batchID string, items 
 	}
 }
 
-func GetCategoryAttributes(client *resty.Client, token string, categoryID string) error {
+func (s *PazaramaService) GetCategoryAttributes(token string, categoryID string) error {
 	fmt.Printf("\n[LOG] %s kategorisi için özellikler çekiliyor...\n", categoryID)
 
 	// DİKKAT: Endpoint ve Parametre ismi (Id) güncellendi!
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetQueryParam("Id", categoryID). // "categoryId" değil, "Id"
 		Get("https://isortagimapi.pazarama.com/category/getCategoryWithAttributes")
@@ -367,11 +301,11 @@ func GetCategoryAttributes(client *resty.Client, token string, categoryID string
 	return nil
 }
 
-func AutoMapMandatoryAttributes(client *resty.Client, token string, categoryID string) error {
+func (s *PazaramaService) AutoMapMandatoryAttributes(token string, categoryID string) error {
 	fmt.Printf("\n[LOG] %s kategorisi için zorunlu özellikler analiz ediliyor...\n", categoryID)
 
 	// Daha önce yazdığımız endpoint ve Parametre (Id)
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetAuthToken(token).
 		SetQueryParam("Id", categoryID).
 		Get("https://isortagimapi.pazarama.com/category/getCategoryWithAttributes")
@@ -429,7 +363,128 @@ func AutoMapMandatoryAttributes(client *resty.Client, token string, categoryID s
 	return nil
 }
 
-func GetDefaultAttributesFromDB(categoryID string) []core.PazaramaAttribute {
+func (s *PazaramaService) SendBatchToPazarama(token string, products []core.PazaramaProductItem) (string, error) {
+	request := core.PazaramaCreateProductRequest{
+		Products: products,
+	}
+
+	var apiResp struct {
+		Data struct {
+			BatchRequestId string `json:"batchRequestId"`
+		} `json:"data"`
+		Success bool `json:"success"`
+	}
+
+	resp, err := s.Client.R().
+		SetAuthToken(token).
+		SetBody(request).
+		SetResult(&apiResp).
+		Post("https://isortagimapi.pazarama.com/product/create")
+
+	if err != nil {
+		return "", fmt.Errorf("HTTP Hatası: %v", err)
+	}
+
+	if !apiResp.Success {
+		return "", fmt.Errorf("Pazarama API Hatası: %s", resp.String())
+	}
+
+	return apiResp.Data.BatchRequestId, nil
+}
+
+// Pazarama API erişimi için token alır
+func (s *PazaramaService) GetToken() (string, error) {
+	var authRes core.PazaramaAuthResponse
+	resp, err := s.Client.R().
+		SetHeader("Content-Type", "application/x-www-form-urlencoded").
+		SetBasicAuth(s.Cfg.Pazarama.ClientID, s.Cfg.Pazarama.ClientSecret).
+		SetFormData(map[string]string{"grant_type": "client_credentials"}).
+		SetResult(&authRes).
+		Post("https://isortagimgiris.pazarama.com/connect/token")
+
+	if err != nil || !resp.IsSuccess() {
+		return "", fmt.Errorf("[HATA] Pazarama Auth Hatası: %v", err)
+	}
+	return authRes.Data.AccessToken, nil
+}
+
+// Pazarama'dan ürünleri çeker ve merkezi DB'ye kaydeder
+func (s *PazaramaService) SyncProducts() error {
+	token, err := s.GetToken()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("[PZR] Ürün senkronizasyonu başlatılıyor...")
+
+	// API'den ham ürünleri çekiyoruz (Mevcut döngü mantığını koruyoruz)
+	pzrProducts, err := s.fetchFromAPI(token)
+	if err != nil {
+		return err
+	}
+
+	for _, pzr := range pzrProducts {
+		// Log tutma alışkanlığına uygun akış bilgisi
+		fmt.Printf("[PZR-AKIS] İşleniyor: %s | Fiyat: %.2f\n", pzr.Code, pzr.SalePrice)
+
+		// Barkod temizleme: Senin sync_service içindeki mantığı buraya taşıyoruz
+		cleanBarcode := strings.TrimSuffix(pzr.Code, "-PZR")
+
+		// Merkezi modele (core.Product) dönüştürme (Mapping)
+		p := core.Product{
+			Barcode:             cleanBarcode,
+			ProductName:         pzr.Name,
+			PazaramaId:          pzr.Code,
+			Price:               pzr.SalePrice,
+			Stock:               pzr.StockCount,
+			Brand:               pzr.BrandName,
+			PazaramaSyncStatus:  "MATCHED",
+			PazaramaSyncMessage: "Pazarama'dan çekildi ve eşleşti",
+			IsDirty:             0,
+		}
+
+		// Merkezi kayıt fonksiyonunu çağırıyoruz
+		database.SaveProduct(p)
+	}
+
+	fmt.Printf("[OK] %d adet Pazarama ürünü sisteme işlendi.\n", len(pzrProducts))
+	return nil
+}
+
+// Sayfalı yapıda tüm ürünleri getiren yardımcı metod
+func (s *PazaramaService) fetchFromAPI(token string) ([]core.PazaramaProduct, error) {
+	var allProducts []core.PazaramaProduct
+	page := 1
+	size := 100
+
+	for {
+		fmt.Printf("[LOG] Pazarama Sayfa %d çekiliyor...\n", page)
+		var result core.PazaramaProductResponse
+		resp, err := s.Client.R().
+			SetAuthToken(token).
+			SetQueryParams(map[string]string{
+				"Approved": "true",
+				"Page":     fmt.Sprintf("%d", page),
+				"Size":     fmt.Sprintf("%d", size),
+			}).
+			SetResult(&result).
+			Get("https://isortagimapi.api.pazarama.com/product/products")
+
+		if err != nil || !resp.IsSuccess() || !result.Success || len(result.Data) == 0 {
+			break
+		}
+
+		allProducts = append(allProducts, result.Data...)
+		if len(result.Data) < size {
+			break
+		}
+		page++
+		time.Sleep(500 * time.Millisecond) // API'yi yormayalım
+	}
+	return allProducts, nil
+}
+
+func (s *PazaramaService) GetDefaultAttributesFromDB(categoryID string) []core.PazaramaAttribute {
 
 	attrs := []core.PazaramaAttribute{}
 
@@ -451,33 +506,4 @@ func GetDefaultAttributesFromDB(categoryID string) []core.PazaramaAttribute {
 		}
 	}
 	return attrs
-}
-
-func SendBatchToPazarama(client *resty.Client, token string, products []core.PazaramaProductItem) (string, error) {
-	request := core.PazaramaCreateProductRequest{
-		Products: products,
-	}
-
-	var apiResp struct {
-		Data struct {
-			BatchRequestId string `json:"batchRequestId"`
-		} `json:"data"`
-		Success bool `json:"success"`
-	}
-
-	resp, err := client.R().
-		SetAuthToken(token).
-		SetBody(request).
-		SetResult(&apiResp).
-		Post("https://isortagimapi.pazarama.com/product/create")
-
-	if err != nil {
-		return "", fmt.Errorf("HTTP Hatası: %v", err)
-	}
-
-	if !apiResp.Success {
-		return "", fmt.Errorf("Pazarama API Hatası: %s", resp.String())
-	}
-
-	return apiResp.Data.BatchRequestId, nil
 }
