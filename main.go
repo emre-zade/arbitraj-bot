@@ -17,9 +17,7 @@ import (
 )
 
 func main() {
-
 	clearConsole()
-
 	database.InitDB()
 
 	cfg, err := config.LoadConfig("config/config.json")
