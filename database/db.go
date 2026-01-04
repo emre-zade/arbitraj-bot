@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -331,8 +333,56 @@ func UpdateSyncResult(barcode string, platform string, status string, message st
 }
 
 func SaveProduct(p core.Product) {
+	var exHB, exPZR, exPTT sql.NullString
+	var exPrice float64
+	var exStock int
+	err := DB.QueryRow("SELECT hb_sku, pazarama_id, ptt_id, price, stock FROM products WHERE barcode = ?", p.Barcode).
+		Scan(&exHB, &exPZR, &exPTT, &exPrice, &exStock)
 
-	fmt.Printf("[DB] Ürün İşleniyor -> Barkod: %s | İsim: %s\n", p.Barcode, p.ProductName)
+	if err == nil {
+		// PAZARAMA KONTROLÜ
+		if p.PazaramaId != "" && exPZR.Valid && exPZR.String != "" && exPZR.String != p.PazaramaId {
+			LogDuplicate("Pazarama", p.Barcode, exPZR.String, p.PazaramaId, exPrice, p.Price, exStock, p.Stock)
+		}
+
+		// PTT KONTROLÜ
+		if p.PttId != "" && exPTT.Valid && exPTT.String != "" && exPTT.String != p.PttId {
+			LogDuplicate("PTT", p.Barcode, exPTT.String, p.PttId, exPrice, p.Price, exStock, p.Stock)
+		}
+
+		// HEPSİBURADA KONTROLÜ
+		if p.HbSku != "" && exHB.Valid && exHB.String != "" && exHB.String != p.HbSku {
+			LogDuplicate("Hepsiburada", p.Barcode, exHB.String, p.HbSku, exPrice, p.Price, exStock, p.Stock)
+		}
+	}
+
+	matchMessage := "YENİ KAYIT"
+	if err == nil {
+		var platforms []string
+		if exHB.Valid && exHB.String != "" {
+			platforms = append(platforms, "HB")
+		}
+		if exPZR.Valid && exPZR.String != "" {
+			platforms = append(platforms, "Pazarama")
+		}
+		if exPTT.Valid && exPTT.String != "" {
+			platforms = append(platforms, "PTT")
+		}
+
+		if len(platforms) > 0 {
+			matchMessage = strings.Join(platforms, " + ") + " ile eşleşti"
+		}
+	}
+
+	if p.HbSku != "" {
+		p.HbSyncMessage = matchMessage
+	}
+	if p.PazaramaId != "" {
+		p.PazaramaSyncMessage = matchMessage
+	}
+	if p.PttId != "" {
+		p.PttSyncMessage = matchMessage
+	}
 
 	query := `
     INSERT INTO products (
@@ -346,18 +396,22 @@ func SaveProduct(p core.Product) {
     ON CONFLICT(barcode) DO UPDATE SET
         product_name = COALESCE(NULLIF(excluded.product_name, ''), products.product_name),
         brand = COALESCE(NULLIF(excluded.brand, ''), products.brand),
-        category_name = COALESCE(NULLIF(excluded.category_name, ''), products.category_name),
-        description = COALESCE(NULLIF(excluded.description, ''), products.description),
         price = CASE WHEN excluded.price > 0 THEN excluded.price ELSE products.price END,
         stock = excluded.stock,
-        images = COALESCE(NULLIF(excluded.images, ''), products.images),
+        vat_rate = excluded.vat_rate,
         hb_sku = COALESCE(NULLIF(excluded.hb_sku, ''), products.hb_sku),
+        hb_sync_status = COALESCE(NULLIF(excluded.hb_sync_status, ''), products.hb_sync_status),
+        hb_sync_message = COALESCE(NULLIF(excluded.hb_sync_message, ''), products.hb_sync_message),
         pazarama_id = COALESCE(NULLIF(excluded.pazarama_id, ''), products.pazarama_id),
+        pazarama_sync_status = COALESCE(NULLIF(excluded.pazarama_sync_status, ''), products.pazarama_sync_status),
+        pazarama_sync_message = COALESCE(NULLIF(excluded.pazarama_sync_message, ''), products.pazarama_sync_message),
         ptt_id = COALESCE(NULLIF(excluded.ptt_id, ''), products.ptt_id),
+        ptt_sync_status = COALESCE(NULLIF(excluded.ptt_sync_status, ''), products.ptt_sync_status),
+        ptt_sync_message = COALESCE(NULLIF(excluded.ptt_sync_message, ''), products.ptt_sync_message),
         is_dirty = 1,
         updated_at = CURRENT_TIMESTAMP;`
 
-	_, err := DB.Exec(query,
+	_, err = DB.Exec(query,
 		p.Barcode, p.ProductName, p.Brand, p.CategoryName, p.Description,
 		p.Price, p.VatRate, p.Stock, p.DeliveryTime, p.Images,
 		p.HbSku, p.HbSyncStatus, p.HbSyncMessage,
@@ -370,8 +424,7 @@ func SaveProduct(p core.Product) {
 		log.Printf("[HATA] DB Kayıt İşlemi Başarısız (%s): %v", p.Barcode, err)
 		return
 	}
-
-	fmt.Printf("[DB] İşlem Tamamlandı: %s\n", p.Barcode)
+	fmt.Printf("[DB] İşlem Tamamlandı: %s (%s)\n", p.Barcode, matchMessage)
 }
 
 func SyncExcelToDB(products []core.ExcelProduct) {
@@ -393,4 +446,34 @@ func SyncExcelToDB(products []core.ExcelProduct) {
 		SaveProduct(p)
 	}
 	fmt.Println("[OK] Excel verileri başarıyla sisteme işlendi.")
+}
+
+func LogDuplicate(platform, barcode, existingID, newID string, oldPrice, newPrice float64, oldStock, newStock int) {
+	dirPath := "./storage"
+	fileName := dirPath + "/duplicates.log"
+
+	_ = os.MkdirAll(dirPath, 0755)
+
+	f, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[HATA] Log dosyası açılamadı: %v", err)
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("02-01-2006 15:04:05")
+
+	logEntry := fmt.Sprintf("[%s] [%s] Barkod: %s | Mevcut(ID: %s, Fiyat: %.2f, Stok: %d) | Gelen(ID: %s, Fiyat: %.2f, Stok: %d)\n",
+		timestamp, platform, barcode, existingID, oldPrice, oldStock, newID, newPrice, newStock)
+
+	fmt.Printf("\033[33m[UYARI] Mükerrer Ürün! Barkod: %s (%s) | Mevcut Fiyat: %.2f, Yeni: %.2f | Mevcut Stok: %d, Yeni: %d\033[0m\n",
+		barcode, platform, oldPrice, newPrice, oldStock, newStock)
+
+	fmt.Printf("\033[33m[UYARI] %s Dizinine Detaylar Kaydedildi.\033[0m\n", fileName)
+
+	if _, err := f.WriteString(logEntry); err != nil {
+		log.Printf("[HATA] Log yazılamadı: %v", err)
+	}
+
+	time.Sleep(5 * time.Second)
 }

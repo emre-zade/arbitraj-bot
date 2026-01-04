@@ -3,11 +3,11 @@ package services
 import (
 	"arbitraj-bot/core"
 	"arbitraj-bot/database"
-	"arbitraj-bot/utils"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -26,105 +26,97 @@ func NewHBService(client *resty.Client, cfg *core.Config) *HBService {
 	}
 }
 
+// --- ANA FONKSİYONLAR ---
+
 // SyncProducts Hepsiburada'dan ürünleri çeker ve merkezi DB'ye kaydeder
 func (s *HBService) SyncProducts() error {
-	fmt.Println("[HB] Ürün senkronizasyonu başlatılıyor...")
-
-	// API'den ham listeyi çekiyoruz
+	// 1. Senin yazdığın fetchFromAPI ile 39 ürünü (stok/fiyat) çekiyoruz
 	listings, err := s.fetchFromAPI()
 	if err != nil {
 		return err
 	}
 
 	for _, hbProd := range listings {
-		// Log tutmayı sevdiğin için akışı konsola yazıyoruz
-		fmt.Printf("[HB-AKIS] İşleniyor: %s | Fiyat: %.2f\n", hbProd.MerchantSku, hbProd.Price)
+		// 2. KRİTİK ADIM: Her ürün için isim ve resim detayını ayrıca soruyoruz
+		// Bu fonksiyonu az önce hazırladığımız V1/V2 denemeli yapı olarak düşün
+		name, imageURL := s.fetchProductDetails(hbProd.HepsiburadaSku)
 
-		// Hepsiburada'dan gelen veriyi merkezi core.Product modeline dönüştürüyoruz
+		// 3. Veritabanına "Dolu" veriyi gönderiyoruz
 		p := core.Product{
 			Barcode:      hbProd.MerchantSku,
-			ProductName:  hbProd.ProductName,
+			ProductName:  name, // Katalogdan gelen isim
 			HbSku:        hbProd.HepsiburadaSku,
 			Price:        hbProd.Price,
 			Stock:        hbProd.AvailableStock,
+			Images:       imageURL, // Katalogdan gelen resim
 			HbSyncStatus: "SYNCED",
-			IsDirty:      0,
 		}
-
-		// Yeni oluşturduğumuz merkezi fonksiyonla kayıt yapıyoruz
 		database.SaveProduct(p)
 	}
-
-	fmt.Printf("[OK] %d adet Hepsiburada ürünü sisteme işlendi.\n", len(listings))
 	return nil
 }
 
-// getListFromAPI Hepsiburada API'sine bağlanıp ham veriyi getiren yardımcı fonksiyon
-func (s *HBService) fetchFromAPI() ([]core.HBProduct, error) {
-	url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s", s.Cfg.Hepsiburada.MerchantID)
+func (s *HBService) fetchProductDetails(hbSku string) (string, string) {
+	// 1. DENEME: Katalog API (V1)
+	urlV1 := fmt.Sprintf("https://catalog-external-sit.hepsiburada.com/products/%s", hbSku)
 
-	var apiResponse core.HBListingResponse
+	var resultV1 struct {
+		Name   string   `json:"name"`
+		Images []string `json:"images"`
+	}
 
-	_, err := s.Client.R().
+	resp, err := s.Client.R().
 		SetHeader("accept", "application/json").
 		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
-		SetQueryParam("offset", "0").
-		SetQueryParam("limit", "10").
 		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
-		SetResult(&apiResponse).
-		Get(url)
+		SetResult(&resultV1).
+		Get(urlV1)
 
-	if err != nil {
-		return nil, fmt.Errorf("HB API bağlantı hatası: %v", err)
+	// Eğer V1 veri döndürdüyse hemen kullanalım
+	if err == nil && resp.StatusCode() == 200 && resultV1.Name != "" {
+		img := ""
+		if len(resultV1.Images) > 0 {
+			img = resultV1.Images[0]
+		}
+		return resultV1.Name, img
 	}
 
-	return apiResponse.Listings, nil
+	// 2. DENEME: Product Gateway (V2) - SIT ortamında daha başarılıdır
+	fmt.Printf("[DEBUG] %s için V1 başarısız, V2 deneniyor...\n", hbSku)
+	urlV2 := fmt.Sprintf("https://product-gateway-sit.hepsiburada.com/api/v2/products/hepsiburadaSku/%s", hbSku)
+
+	var resultV2 struct {
+		Data struct {
+			ProductName string   `json:"productName"`
+			Images      []string `json:"images"`
+		} `json:"data"`
+	}
+
+	resp, err = s.Client.R().
+		SetHeader("accept", "application/json").
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
+		SetResult(&resultV2).
+		Get(urlV2)
+
+	if err == nil && resp.StatusCode() == 200 {
+		img := ""
+		if len(resultV2.Data.Images) > 0 {
+			img = resultV2.Data.Images[0]
+		}
+		return resultV2.Data.ProductName, img
+	}
+
+	return "", ""
 }
 
-func GetHBProductDetail(client *resty.Client, cfg *core.Config, hbSku string) (string, []string) {
-	// Pattern 1: Katalog External (Dökümandaki listing pattern'ine en yakın olan)
-	url := fmt.Sprintf("https://catalog-external-sit.hepsiburada.com/products/%s", hbSku)
-
-	fmt.Printf("[LOG] Katalog Sorgulanıyor: %s\n", url)
-
-	resp, err := client.R().
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		Get(url)
-
-	if err != nil {
-		fmt.Printf("[HATA] %s için bağlantı hatası: %v\n", hbSku, err)
-		return "Bağlantı Hatası", nil
-	}
-
-	// Body gerçekten boş mu? Uzunluğu nedir?
-	fmt.Printf("[DEBUG] SKU: %s | Status: %d | Body Len: %d | Body: %s\n",
-		hbSku, resp.StatusCode(), len(resp.Body()), resp.String())
-
-	// Eğer body hala boşsa alternatif URL'yi (v2) deneyelim
-	if len(resp.Body()) == 0 {
-		urlV2 := fmt.Sprintf("https://product-gateway-sit.hepsiburada.com/api/v2/products/hepsiburadaSku/%s", hbSku)
-		fmt.Printf("[LOG] Alternatif (V2) Deneniyor: %s\n", urlV2)
-		resp, _ = client.R().
-			SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-			SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-			Get(urlV2)
-
-		fmt.Printf("[DEBUG-V2] Status: %d | Body: %s\n", resp.StatusCode(), resp.String())
-	}
-
-	// Gelen veriyi burada manuel parse edeceğiz...
-	return "SIT Verisi Bekleniyor", nil
-}
-
-func UpdateHBPriceStock(client *resty.Client, merchantID string, apiKey string, sku string, price float64, stock int) error {
-	// Dökümandaki güncelleme endpoint'i (SIT)
+// UpdatePriceStock Hepsiburada Fiyat/Stok güncellemesi yapar
+func (s *HBService) UpdatePriceStock(sku string, price float64, stock int) error {
 	url := "https://listing-external-sit.hepsiburada.com/listings/bulk"
 
-	// Hepsiburada'nın beklediği update formatı
 	payload := []map[string]interface{}{
 		{
-			"merchantid":     merchantID,
+			"merchantid":     s.Cfg.Hepsiburada.MerchantID,
 			"hepsiburadasku": sku,
 			"price":          price,
 			"availableStock": stock,
@@ -133,140 +125,127 @@ func UpdateHBPriceStock(client *resty.Client, merchantID string, apiKey string, 
 
 	fmt.Printf("[LOG] HB Fiyat/Stok Güncelleniyor: SKU: %s, Fiyat: %.2f\n", sku, price)
 
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetHeader("Content-Type", "application/json").
-		SetHeader("User-Agent", "solidmarket_dev").
-		SetBasicAuth(merchantID, apiKey).
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
 		SetBody(payload).
 		Post(url)
 
 	if err != nil {
-		return fmt.Errorf("Bağlantı hatası: %v", err)
+		return fmt.Errorf("bağlantı hatası: %v", err)
 	}
 
 	if resp.StatusCode() != http.StatusOK && resp.StatusCode() != http.StatusAccepted {
-		return fmt.Errorf("HB Güncelleme Hatası (%d): %s", resp.StatusCode(), resp.String())
+		return fmt.Errorf("HB güncelleme hatası (%d): %s", resp.StatusCode(), resp.String())
 	}
 
 	return nil
 }
 
-func UpdateHBProductName(client *resty.Client, merchantID, secretKey, sku, newName string) error {
-	// Dökümana göre SIT Ticket API URL'si
-	url := "https://mpop-sit.hepsiburada.com/ticket-api/api/integrator/import"
+func (s *HBService) SyncCategories() error {
+	fmt.Println("[HB] Tüm kategoriler sayfa sayfa çekiliyor...")
 
-	updateData := map[string]interface{}{
-		"merchantId": merchantID,
-		"items": []map[string]interface{}{
-			{
-				"hbSku":       sku,
-				"productName": newName,
-			},
-		},
-	}
+	page := 0
+	size := 1000 // Her seferinde 1000 kategori isteyerek hızı artıralım
+	totalSaved := 0
 
-	jsonData, _ := json.Marshal(updateData)
+	for {
+		var result struct {
+			Data []core.HBCategory `json:"data"`
+		}
 
-	// Döküman bu JSON'un bir "dosya" olarak multipart/form-data ile gönderilmesini şart koşar.
-	resp, err := client.R().
-		SetHeader("accept", "application/json;charset=UTF-8").
-		SetHeader("User-Agent", "solidmarket_dev").
-		SetBasicAuth(merchantID, secretKey).
-		SetFileReader("file", "update.json", bytes.NewReader(jsonData)).
-		Post(url)
-
-	if err != nil {
-		return err
-	}
-	if resp.IsError() {
-		return fmt.Errorf("İsim Hatası (%d): %s", resp.StatusCode(), resp.String())
-	}
-	return nil
-}
-
-func FetchHBProductsWithDetails(client *resty.Client, cfg *core.Config) error {
-
-	url := "https://product-gateway-sit.hepsiburada.com/api/v2/products/merchant/listings"
-
-	fmt.Printf("[LOG] HB Ürün Bilgileri ve Görseller Çekiliyor: %s\n", url)
-
-	resp, err := client.R().
-		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetQueryParam("merchantId", cfg.Hepsiburada.MerchantID).
-		SetQueryParam("page", "0").
-		SetQueryParam("size", "10").
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		Get(url)
-
-	if err != nil {
-		return fmt.Errorf("Bağlantı hatası: %v", err)
-	}
-
-	if resp.StatusCode() != 200 {
-		return fmt.Errorf("HB SIT Katalog Hatası (%d): %s", resp.StatusCode(), resp.String())
-	}
-
-	fmt.Println("[DEBUG] HB Katalog Verisi:", resp.String())
-
-	return nil
-}
-
-/*
-func GetHBCategories(client *resty.Client, cfg *core.Config) ([]core.HBCategory, error) {
-
-	url := "https://mpop-sit.hepsiburada.com/product/api/categories/get-all-categories"
-
-	var result struct {
-		Data []core.HBCategory `json:"data"`
-	}
-
-	fmt.Printf("[LOG] HB Kategorileri Çekiliyor (Merchant: %s, Agent: %s)\n", cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.UserAgent)
-
-	resp, err := client.R().
-		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent). // KRİTİK: solidmarket_dev olmazsa 403 verir
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		SetQueryParams(map[string]string{
-			"leaf":      "true",
-			"status":    "ACTIVE",
-			"available": "true",
-			"version":   "1",
-			"page":      "0",
-			"size":      "1000",
-		}).
-		SetResult(&result).
-		Get(url)
-
-	if err != nil {
-		return nil, fmt.Errorf("Bağlantı hatası: %v", err)
-	}
-
-	// Hala 403 alıyorsak /product prefix'ini kaldırıp deneyeceğiz
-	if resp.StatusCode() == 403 {
-		fmt.Println("[LOG] 403 Alındı, Alternatif Path Deneniyor...")
-		urlAlt := "https://mpop-sit.hepsiburada.com/api/categories/get-all-categories"
-		resp, err = client.R().
+		resp, err := s.Client.R().
 			SetHeader("accept", "application/json").
-			SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-			SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-			SetQueryParams(map[string]string{"leaf": "true", "status": "ACTIVE", "available": "true", "version": "1"}).
+			SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+			SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
+			SetQueryParams(map[string]string{
+				"leaf":      "true",
+				"status":    "ACTIVE",
+				"available": "true",
+				"version":   "1",
+				"page":      fmt.Sprintf("%d", page),
+				"size":      fmt.Sprintf("%d", size),
+			}).
 			SetResult(&result).
-			Get(urlAlt)
+			Get("https://mpop-sit.hepsiburada.com/product/api/categories/get-all-categories")
+
+		if err != nil {
+			return fmt.Errorf("bağlantı hatası: %v", err)
+		}
+
+		if resp.StatusCode() != 200 {
+			break // Hata veya boş sayfa gelirse döngüden çık
+		}
+
+		// Eğer o sayfadan veri gelmediyse işlem bitmiştir
+		if len(result.Data) == 0 {
+			break
+		}
+
+		for _, cat := range result.Data {
+			database.SavePlatformCategory("hb", "0", "Root", fmt.Sprintf("%d", cat.CategoryID), cat.Name, true)
+			totalSaved++
+		}
+
+		fmt.Printf("[HB] %d. sayfa işlendi, toplam %d kategori kaydedildi.\n", page+1, totalSaved)
+
+		// Eğer gelen veri 'size'dan küçükse son sayfadayız demektir
+		if len(result.Data) < size {
+			break
+		}
+
+		page++
 	}
 
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("HB Kategori Hatası (%d): %s", resp.StatusCode(), resp.String())
-	}
-
-	return result.Data, nil
+	fmt.Printf("[OK] Hepsiburada'dan toplam %d kategori mühürlendi.\n", totalSaved)
+	return nil
 }
-*/
 
-func GetHBCategoryAttributes(client *resty.Client, cfg *core.Config, catID string) ([]core.HBAttribute, error) {
+// --- YARDIMCI METODLAR ---
+
+func (s *HBService) fetchFromAPI() ([]core.HBProduct, error) {
+	var allListings []core.HBProduct
+	offset := 0
+	limit := 100
+
+	for {
+		url := fmt.Sprintf("https://listing-external-sit.hepsiburada.com/listings/merchantid/%s", s.Cfg.Hepsiburada.MerchantID)
+		var apiResponse core.HBListingResponse
+
+		resp, err := s.Client.R().
+			SetHeader("accept", "application/json").
+			SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+			SetQueryParam("offset", strconv.Itoa(offset)).
+			SetQueryParam("limit", strconv.Itoa(limit)).
+			SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
+			SetResult(&apiResponse).
+			Get(url)
+
+		if err != nil {
+			return nil, fmt.Errorf("HB API bağlantı hatası: %v", err)
+		}
+
+		if resp.StatusCode() != 200 || len(apiResponse.Listings) == 0 {
+			break
+		}
+
+		allListings = append(allListings, apiResponse.Listings...)
+		fmt.Printf("[HB] %d ürün çekildi, sonraki sayfa aranıyor...\n", len(allListings))
+
+		if len(apiResponse.Listings) < limit {
+			break
+		}
+
+		offset += limit
+	}
+
+	return allListings, nil
+}
+
+func (s *HBService) GetCategoryAttributes(catID string) ([]core.HBAttribute, error) {
 	url := fmt.Sprintf("https://mpop-sit.hepsiburada.com/product/api/categories/%s/attributes", catID)
 
-	// JSON'daki 3 farklı listeyi de yakalıyoruz
 	var result struct {
 		Data struct {
 			BaseAttributes    []core.HBAttribute `json:"baseAttributes"`
@@ -275,10 +254,10 @@ func GetHBCategoryAttributes(client *resty.Client, cfg *core.Config, catID strin
 		} `json:"data"`
 	}
 
-	resp, err := client.R().
+	_, err := s.Client.R().
 		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
 		SetQueryParam("version", "1").
 		SetResult(&result).
 		Get(url)
@@ -287,119 +266,33 @@ func GetHBCategoryAttributes(client *resty.Client, cfg *core.Config, catID strin
 		return nil, err
 	}
 
-	utils.WriteToLogFile(resp.String())
-
-	// Tüm listeleri tek bir slice'ta birleştiriyoruz
 	var all []core.HBAttribute
 	all = append(all, result.Data.BaseAttributes...)
 	all = append(all, result.Data.Attributes...)
 	all = append(all, result.Data.VariantAttributes...)
 
-	fmt.Printf("[LOG] %s kategorisi için toplam %d özellik birleştirildi.\n", catID, len(all))
 	return all, nil
 }
 
-func GetHBAttributeValues(client *resty.Client, cfg *core.Config, catID string, attrID string) ([]core.HBAttributeValue, error) {
-	url := fmt.Sprintf("https://mpop-sit.hepsiburada.com/product/api/categories/%s/attribute/%s/values", catID, attrID)
-
-	// Bu fonksiyonun da 'Data' sarmalını düzeltelim (Genelde liste direkt gelmez)
-	var result struct {
-		Data []core.HBAttributeValue `json:"data"`
-	}
-
-	resp, err := client.R().
-		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		SetQueryParams(map[string]string{
-			"version": "1", // Önce 1 deneyelim, dökümanda 4 yazsa da uyumsuzluk olabilir
-			"page":    "0",
-			"size":    "1000",
-		}).
-		SetResult(&result).
-		Get(url)
-
-	if err != nil || resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("Değer listesi çekilemedi: %v", err)
-	}
-
-	return result.Data, nil
-}
-
-/*
-	func SyncHBCategories(client *resty.Client, cfg *core.Config) error {
-		categories, err := GetHBCategories(client, cfg)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("[LOG] %d adet kategori bulundu, DB'ye işleniyor...\n", len(categories))
-		return database.SavePlatformCategories("hb", categories)
-	}
-*/
-func UploadHBProduct(client *resty.Client, cfg *core.Config, product core.HBImportProduct) error {
+func (s *HBService) UploadProductsBulk(products []core.HBImportProduct) (string, error) {
 	url := "https://mpop-sit.hepsiburada.com/product/api/products/import"
 
-	payload := []core.HBImportProduct{product}
-	jsonData, _ := json.Marshal(payload)
-
-	resp, err := client.R().
-		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		SetFileReader("file", "products.json", bytes.NewReader(jsonData)).
-		Post(url)
-
-	if err != nil {
-		return err
-	}
-	fmt.Printf("[OK] HB Yanıtı: %s\n", resp.String())
-	return nil
-}
-
-func CheckHBImportStatus(client *resty.Client, cfg *core.Config, trackingId string) {
-	url := fmt.Sprintf("https://mpop-sit.hepsiburada.com/product/api/products/status/%s", trackingId)
-
-	fmt.Printf("[LOG] %s için durum sorgulanıyor...\n", trackingId)
-
-	resp, err := client.R().
-		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		Get(url)
-
-	if err != nil {
-		fmt.Printf("[HATA] Sorgulama başarısız: %v\n", err)
-		return
-	}
-
-	// Gelen cevabı ham olarak basıyoruz ki hatayı görelim
-	fmt.Printf("[DEBUG] HB Durum Yanıtı: %s\n", resp.String())
-}
-
-func UploadHBProductsBulk(client *resty.Client, cfg *core.Config, products []core.HBImportProduct) (string, error) {
-	url := "https://mpop-sit.hepsiburada.com/product/api/products/import"
-
-	// Tüm listeyi JSON'a çeviriyoruz
 	jsonData, err := json.Marshal(products)
 	if err != nil {
-		return "", fmt.Errorf("JSON dönüştürme hatası: %v", err)
+		return "", fmt.Errorf("JSON hatası: %v", err)
 	}
 
-	fmt.Printf("[LOG] %d adet ürün paketleniyor ve fırlatılıyor...\n", len(products))
-
-	resp, err := client.R().
+	resp, err := s.Client.R().
 		SetHeader("accept", "application/json").
-		SetHeader("User-Agent", cfg.Hepsiburada.UserAgent).
-		SetBasicAuth(cfg.Hepsiburada.MerchantID, cfg.Hepsiburada.ApiSecret).
-		SetFileReader("file", "bulk_products.json", bytes.NewReader(jsonData)).
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
+		SetFileReader("file", "bulk.json", bytes.NewReader(jsonData)).
 		Post(url)
 
 	if err != nil {
 		return "", err
 	}
 
-	// Yanıtı parse edip trackingId dönüyoruz
 	var result struct {
 		Data struct {
 			TrackingId string `json:"trackingId"`
@@ -408,8 +301,25 @@ func UploadHBProductsBulk(client *resty.Client, cfg *core.Config, products []cor
 
 	err = json.Unmarshal(resp.Body(), &result)
 	if err != nil {
-		return "", fmt.Errorf("Yanıt parse edilemedi: %s", resp.String())
+		return "", fmt.Errorf("yanıt parse edilemedi: %s", resp.String())
 	}
 
 	return result.Data.TrackingId, nil
+}
+
+func (s *HBService) CheckImportStatus(trackingId string) {
+	url := fmt.Sprintf("https://mpop-sit.hepsiburada.com/product/api/products/status/%s", trackingId)
+
+	resp, err := s.Client.R().
+		SetHeader("accept", "application/json").
+		SetHeader("User-Agent", s.Cfg.Hepsiburada.UserAgent).
+		SetBasicAuth(s.Cfg.Hepsiburada.MerchantID, s.Cfg.Hepsiburada.ApiSecret).
+		Get(url)
+
+	if err != nil {
+		fmt.Printf("[HATA] Sorgulama başarısız: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[HB] Durum Yanıtı: %s\n", resp.String())
 }

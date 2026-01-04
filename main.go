@@ -22,7 +22,6 @@ func main() {
 
 	database.InitDB()
 
-	// 2. Yapılandırma Dosyasını Yükle
 	cfg, err := config.LoadConfig("config/config.json")
 	if err != nil {
 		log.Fatalf("Yapılandırma yüklenemedi: %v", err)
@@ -130,8 +129,8 @@ func showHbMenu(hbSvc *services.HBService, reader *bufio.Reader) {
 		fmt.Println("\n" + strings.Repeat("-", 45))
 		fmt.Println("           HEPSİBURADA İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Ürünleri ve Stokları Güncelle (Sync)")
-		fmt.Println("2- Kategori Listesini Senkronize Et")
+		fmt.Println("1- Ürünleri ve Stokları Güncelle (Merkezi DB Güncelle)")
+		fmt.Println("2- Kategori Listesini Senkronize Et (Merkezi DB Güncelle)")
 		fmt.Println("0- Ana Menüye Dön")
 
 		choice := askInput("\nSeçiminiz: ", reader)
@@ -139,7 +138,7 @@ func showHbMenu(hbSvc *services.HBService, reader *bufio.Reader) {
 		case "1":
 			hbSvc.SyncProducts()
 		case "2":
-			// hbSvc.SyncCategories() // Eğer metod hazırsa
+			hbSvc.SyncCategories()
 		case "0":
 			return
 		}
@@ -152,8 +151,8 @@ func showPttMenu(pttSvc *services.PttService, reader *bufio.Reader) {
 		fmt.Println("\n" + strings.Repeat("-", 45))
 		fmt.Println("            PttAVM İŞLEMLERİ")
 		fmt.Println(strings.Repeat("-", 45))
-		fmt.Println("1- Ürün Senkronizasyonu (SOAP)")
-		fmt.Println("2- Kategori Ağacını Güncelle")
+		fmt.Println("1- Ürün Senkronizasyonu 'SOAP' (Merkezi DB Güncelle)")
+		fmt.Println("2- Kategori Ağacını Güncelle (Merkezi DB Güncelle)")
 		fmt.Println("0- Ana Menüye Dön")
 
 		choice := askInput("\nSeçiminiz: ", reader)

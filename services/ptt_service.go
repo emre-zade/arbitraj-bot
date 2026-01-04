@@ -42,24 +42,20 @@ func (s *PttService) SyncProducts() error {
 	}
 
 	for _, ptt := range products {
-		fmt.Printf("[PTT-AKIS] İşleniyor: %s | Stok: %d\n", ptt.Barkod, ptt.Stok)
-
-		finalBarcode := ptt.Barkod
-		if finalBarcode == "" {
-			finalBarcode = ptt.StokKodu
-		}
+		fmt.Printf("[PTT-AKIS] İşleniyor: %s | Stok: %d\n", ptt.Barkod, ptt.MevcutStok)
 
 		cleanBarcode := utils.CleanPttBarcode(ptt.Barkod)
 
 		p := core.Product{
-			Barcode:        cleanBarcode,
-			ProductName:    ptt.UrunAdi,
-			PttId:          ptt.StokKodu,
-			Price:          ptt.Fiyat,
-			Stock:          ptt.Stok,
-			PttSyncStatus:  "SYNCED",
-			PttSyncMessage: "PTT SOAP'tan çekildi",
-			IsDirty:        0,
+
+			Barcode:     cleanBarcode,
+			ProductName: ptt.UrunAdi,
+			Description: ptt.Aciklama,
+			PttId:       strconv.FormatInt(ptt.UrunId, 10),
+			Price:       ptt.MevcutFiyat,
+			VatRate:     ptt.KdvOrani,
+			Stock:       ptt.MevcutStok,
+			IsDirty:     0,
 		}
 		database.SaveProduct(p)
 	}
@@ -199,6 +195,8 @@ func (s *PttService) fetchFromAPI() ([]core.PttProduct, error) {
 			break
 		}
 
+		//fmt.Println("[DEBUG-PTT-XML] Ham Yanıt:", resp.String())
+
 		var result core.PttListResponse
 		xml.Unmarshal(resp.Body(), &result)
 
@@ -208,6 +206,8 @@ func (s *PttService) fetchFromAPI() ([]core.PttProduct, error) {
 		allProducts = append(allProducts, result.Products...)
 		fmt.Printf("[PTT] %d. sayfa alındı. Toplam: %d ürün\n", page, len(allProducts))
 		page++
+
+		time.Sleep(500 * time.Millisecond)
 	}
 	return allProducts, nil
 }

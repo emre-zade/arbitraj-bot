@@ -432,15 +432,13 @@ func (s *PazaramaService) SyncProducts() error {
 
 		// Merkezi modele (core.Product) dönüştürme (Mapping)
 		p := core.Product{
-			Barcode:             cleanBarcode,
-			ProductName:         pzr.Name,
-			PazaramaId:          pzr.Code,
-			Price:               pzr.SalePrice,
-			Stock:               pzr.StockCount,
-			Brand:               pzr.BrandName,
-			PazaramaSyncStatus:  "MATCHED",
-			PazaramaSyncMessage: "Pazarama'dan çekildi ve eşleşti",
-			IsDirty:             0,
+			Barcode:     cleanBarcode,
+			ProductName: pzr.Name,
+			PazaramaId:  pzr.Code,
+			Price:       pzr.SalePrice,
+			Stock:       pzr.StockCount,
+			Brand:       pzr.BrandName,
+			IsDirty:     0,
 		}
 
 		// Merkezi kayıt fonksiyonunu çağırıyoruz
@@ -468,7 +466,7 @@ func (s *PazaramaService) fetchFromAPI(token string) ([]core.PazaramaProduct, er
 				"Size":     fmt.Sprintf("%d", size),
 			}).
 			SetResult(&result).
-			Get("https://isortagimapi.api.pazarama.com/product/products")
+			Get("https://isortagimapi.pazarama.com/product/products")
 
 		if err != nil || !resp.IsSuccess() || !result.Success || len(result.Data) == 0 {
 			break
